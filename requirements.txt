@@ -1,0 +1,5 @@
+pyTelegramBotAPI==4.16.1
+python-dotenv==1.0.1
+python-telegram-bot==20.8
+bottle==0.12.19
+requests==2.26.0
