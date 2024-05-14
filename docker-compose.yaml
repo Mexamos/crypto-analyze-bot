@@ -1,0 +1,4 @@
+services:
+
+    telegram_bot:
+        build: .

@@ -9,6 +9,7 @@ from database.models import Base, CurrencyPrice, Income
 class DatabaseClient:
 
     def __init__(self) -> None:
+        # in-memory database
         self.engine = create_engine("sqlite://", echo=False)
         Base.metadata.create_all(self.engine)
 

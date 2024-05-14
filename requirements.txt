@@ -1,9 +1,9 @@
 pyTelegramBotAPI==4.16.1
-python-dotenv==1.0.1
 python-telegram-bot[job-queue]==20.8
+
+python-dotenv==1.0.1
 bottle==0.12.19
 requests==2.31.0
-uniswap-python==0.7.1
 binance-connector==3.6.0
 
 pandas==2.2.2

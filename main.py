@@ -17,10 +17,9 @@ COIN_MARKET_CAP_API_KEY = os.getenv('COIN_MARKET_CAP_API_KEY')
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
-# TODO докеризировать
 # TODO добавить команду health
+# TODO написать Readme.md
 # TODO запустить на удаленном сервере
-# TODO почитать как, где SQLite хранит данные
 # TODO создать фильтрацию валют по заданому количеству (ВОЗМОЖНО ЭТО И НЕ НУЖНО !!!)
 # TODO подумать на счет валют которые долго висят на балансе и не продаются
 

@@ -21,6 +21,6 @@ class Config:
             'telegram_controller', 'transactions_amount', fallback='5'
         ))
 
-        self.request_currencies_interval = self.config.getint(
+        self.round_plot_numbers_to = self.config.getint(
             'chart', 'round_plot_numbers_to', fallback=5
         )
