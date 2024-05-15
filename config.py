@@ -20,6 +20,9 @@ class Config:
         self.transactions_amount = Decimal(self.config.get(
             'telegram_controller', 'transactions_amount', fallback='5'
         ))
+        self.total_available_amount = Decimal(self.config.get(
+            'telegram_controller', 'total_available_amount', fallback='100'
+        ))
 
         self.round_plot_numbers_to = self.config.getint(
             'chart', 'round_plot_numbers_to', fallback=5

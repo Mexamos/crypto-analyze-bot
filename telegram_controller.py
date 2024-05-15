@@ -1,7 +1,8 @@
+import math
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Optional, List
+from typing import List
 
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -17,13 +18,14 @@ class RequestCurrenciesAction(Enum):
     BUY = 1
     SELL = 2
     ADD_DATA = 3
+    SKIP = 4
 
 
 class TelegramController:
 
     def __init__(
         self, db_client: DatabaseClient, cmc_client: CoinmarketcapClient, binance_cleint: BinanceClient,
-        chart_controller: ChartController, config: Config, token: str, chat_id: Optional[str] = None
+        chart_controller: ChartController, config: Config, token: str, chat_id: str
     ) -> None:
         self.db_client = db_client
         self.cmc_client = cmc_client
@@ -31,9 +33,8 @@ class TelegramController:
         self.chart_controller = chart_controller
         self.config = config
         self.app = Application.builder().token(token).build()
-        self.chat_id = chat_id
+        self.chat_id = int(chat_id)
 
-        self.app.add_handler(CommandHandler("save_chat_id", self.save_chat_id))
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
         self.app.add_handler(CommandHandler("list_current_currencies", self.list_current_currencies))
@@ -46,10 +47,10 @@ class TelegramController:
         # Run the bot until the user presses Ctrl-C
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    async def save_chat_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        self.chat_id = update.message.chat_id
-
     async def prices_on_chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
         if len(context.args) == 0:
             await update.message.reply_text('Need blockchain symbol as comand argument!')
             return
@@ -62,14 +63,20 @@ class TelegramController:
             await update.message.reply_text(str(ex))
 
     async def incomes_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
         symbol = context.args[0].upper() if len(context.args) > 0 else None
         try:
             table_file = self.chart_controller.generate_incomes_table(symbol)
-            await context.bot.send_photo(self.chat_id, table_file)
+            await update.message.reply_photo(table_file)
         except DataForIncomesTableNotFound as ex:
             await update.message.reply_text(str(ex))
 
     async def list_current_currencies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
         currencies = self.db_client.find_currency_price_symbols()
         if len(currencies) > 0:
             await update.message.reply_text('\n'.join(currencies))
@@ -77,6 +84,9 @@ class TelegramController:
             await update.message.reply_text('Currency price data not found')
 
     async def list_income_currencies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
         currencies = self.db_client.find_income_symbols()
         if len(currencies) > 0:
             await update.message.reply_text('\n'.join(currencies))
@@ -93,12 +103,21 @@ class TelegramController:
                 available_currencies.append(currency)
 
         return available_currencies
+    
+    async def _is_funds_buy_new_currency(self, currency: dict) -> bool:
+        number_available_currencies = math.floor(self.config.total_available_amount / self.config.transactions_amount)
+        bought_currencies = self.db_client.find_currency_price_symbols()
+
+        return len(bought_currencies) < number_available_currencies
 
     async def _define_action(self, currency: dict) -> RequestCurrenciesAction:
         currency_prices = self.db_client.find_currency_price_by_symbol(currency['symbol'])
 
         if len(currency_prices) == 0:
-            return RequestCurrenciesAction.BUY
+            if await self._is_funds_buy_new_currency(currency):
+                return RequestCurrenciesAction.BUY
+            else:
+                return RequestCurrenciesAction.SKIP
 
         currency_price = currency_prices[0]
         old_price = currency_price.price
@@ -158,17 +177,15 @@ class TelegramController:
             await context.bot.send_message(self.chat_id, str(ex))
 
     async def request_currencies(self, context: ContextTypes.DEFAULT_TYPE):
-        if not self.chat_id:
-            return
-
         try:
             currencies = self.cmc_client.actual_trending_latest_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
-            if len(currencies) == 0:
-                return
-            
+
             for currency in currencies:
                 action = await self._define_action(currency)
+
+                if action == RequestCurrenciesAction.SKIP:
+                    continue
 
                 await self._create_currency_price(currency)
                 if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
