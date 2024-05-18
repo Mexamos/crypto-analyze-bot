@@ -2,3 +2,5 @@ services:
 
     telegram_bot:
         build: .
+        env_file:
+            - .env

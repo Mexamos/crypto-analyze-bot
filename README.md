@@ -1,1 +1,1 @@
-# Telegram bot to analyze cryptocurencies
+# Telegram bot to analyze cryptocurrencies
