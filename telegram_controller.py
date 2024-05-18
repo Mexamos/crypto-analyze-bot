@@ -12,6 +12,7 @@ from coinmarketcap_client import CoinmarketcapClient, CmcException
 from binance_client import BinanceClient, BinanceException
 from chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
 from config import Config
+from google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
 
 
 class RequestCurrenciesAction(Enum):
@@ -25,12 +26,14 @@ class TelegramController:
 
     def __init__(
         self, db_client: DatabaseClient, cmc_client: CoinmarketcapClient, binance_cleint: BinanceClient,
-        chart_controller: ChartController, config: Config, token: str, chat_id: str
+        chart_controller: ChartController, google_sheets_client: GoogleSheetsClient,
+        config: Config, token: str, chat_id: str
     ) -> None:
         self.db_client = db_client
         self.cmc_client = cmc_client
         self.binance_cleint = binance_cleint
         self.chart_controller = chart_controller
+        self.google_sheets_client = google_sheets_client
         self.config = config
         self.app = Application.builder().token(token).build()
         self.chat_id = int(chat_id)
@@ -153,11 +156,14 @@ class TelegramController:
 
     async def _create_income(self, currency: dict):
         value = await self.caclculate_income_value(currency)
+        date_time = datetime.now(timezone.utc)
         self.db_client.create_income(
             symbol=currency['symbol'],
             value=value,
-            date_time=datetime.now(timezone.utc),
+            date_time=date_time,
         )
+
+        self.google_sheets_client.append_income_row(date_time, currency['symbol'], str(value))
 
     async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, currency: dict):
         symbol = currency['symbol']
@@ -173,7 +179,7 @@ class TelegramController:
 
             # Delete existing currecny prices
             self.db_client.delete_currency_prices(symbol)
-        except DataForChartNotFound as ex:
+        except (DataForChartNotFound, GoogleSheetAppendIncomeFailed) as ex:
             await context.bot.send_message(self.chat_id, str(ex))
 
     async def request_currencies(self, context: ContextTypes.DEFAULT_TYPE):
