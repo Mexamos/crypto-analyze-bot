@@ -1,6 +1,5 @@
 name: Deploy to server
-on:
-    workflow_dispatch:
+on: push
 jobs:
     deploy:
         runs-on: ubuntu-latest
@@ -16,16 +15,17 @@ jobs:
               run: |
                 ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'ENDSSH'
                 cd ${{ secrets.VPS_APP_PATH }}
-                git pull
-                echo "${{ secrets.GOOGLE_SHEETS_TOKEN_VALUE }}" > ./${{ secrets.GOOGLE_SHEETS_TOKEN_FILE_NAME }}
-                echo "${{ secrets.GOOGLE_SHEETS_CREDENTIALS_VALUE }}" > ./${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}
+                git pull --rebase=interactive
+                echo '${{ secrets.GOOGLE_SHEETS_CREDENTIALS_VALUE }}' > ./${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}
 
                 echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
                 echo "BOT_CHAT_ID=${{ secrets.BOT_CHAT_ID }}" >> .env
                 echo "COIN_MARKET_CAP_API_KEY=${{ secrets.COIN_MARKET_CAP_API_KEY }}" >> .env
                 echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}" >> .env
                 echo "BINANCE_SECRET_KEY=${{ secrets.BINANCE_SECRET_KEY }}" >> .env
-                echo "TOKEN_FILE_PATH=${{ secrets.GOOGLE_SHEETS_TOKEN_FILE_NAME }}" >> .env
                 echo "CREDENTIALS_FILE_PATH=${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}" >> .env
                 echo "SPREADSHEET_ID=${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}" >> .env
+
+                docker-compose down
+                docker-compose up --build --force-recreate -d
                 ENDSSH

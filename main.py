@@ -20,7 +20,6 @@ COIN_MARKET_CAP_API_KEY = os.getenv('COIN_MARKET_CAP_API_KEY')
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
-TOKEN_FILE_PATH = os.getenv('TOKEN_FILE_PATH')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
@@ -53,9 +52,7 @@ def main():
     db_client = DatabaseClient()
 
     chart_controller = ChartController(db_client, config)
-    google_sheets_client = GoogleSheetsClient(
-        TOKEN_FILE_PATH, CREDENTIALS_FILE_PATH, SPREADSHEET_ID
-    )
+    google_sheets_client = GoogleSheetsClient(CREDENTIALS_FILE_PATH, SPREADSHEET_ID)
 
     cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY)
     binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
