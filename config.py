@@ -17,6 +17,9 @@ class Config:
         self.percentage_difference_for_sale = self.config.getfloat(
             'telegram_controller', 'percentage_difference_for_sale', fallback=0.1
         )
+        self.currency_conversion = self.config.get(
+            'telegram_controller', 'currency_conversion', fallback='USDT'
+        )
         self.transactions_amount = Decimal(self.config.get(
             'telegram_controller', 'transactions_amount', fallback='5'
         ))

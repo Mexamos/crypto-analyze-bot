@@ -100,13 +100,21 @@ class TelegramController:
         available_currencies = []
         for currency in currencies:
             exchange_infos = self.binance_cleint.find_exchange_info(
-                toAsset=currency['symbol'], fromAsset='USDT'
+                toAsset=currency['symbol'], fromAsset=self.config.currency_conversion
             )
             if isinstance(exchange_infos, list) and len(exchange_infos) > 0:
                 available_currencies.append(currency)
 
         return available_currencies
-    
+
+    async def _filter_conversion_currency(self, currencies: List[dict]) -> List[dict]:
+        available_currencies = []
+        for currency in currencies:
+            if currency['symbol'] != self.config.currency_conversion:
+                available_currencies.append(currency)
+
+        return available_currencies
+
     async def _is_funds_buy_new_currency(self, currency: dict) -> bool:
         number_available_currencies = math.floor(self.config.total_available_amount / self.config.transactions_amount)
         bought_currencies = self.db_client.find_currency_price_symbols()
@@ -168,7 +176,7 @@ class TelegramController:
     async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, currency: dict):
         symbol = currency['symbol']
         try:
-            # TODO add convert to USDT request
+            # TODO add convert to self.config.currency_conversion request
 
             # Send result prices chart
             chart_file = self.chart_controller.generate_chart_image(symbol)
@@ -183,24 +191,24 @@ class TelegramController:
             await context.bot.send_message(self.chat_id, str(ex))
 
     async def request_currencies(self, context: ContextTypes.DEFAULT_TYPE):
-        self.google_sheets_client.append_income_row(datetime.now(timezone.utc), 'SOL', str(124.124214))
-        # try:
-        #     currencies = self.cmc_client.actual_trending_latest_currencies()
-        #     currencies = await self._filter_currencies_by_binance(currencies)
+        try:
+            currencies = self.cmc_client.actual_trending_latest_currencies()
+            currencies = await self._filter_currencies_by_binance(currencies)
+            currencies = await self._filter_conversion_currency(currencies)
 
-        #     for currency in currencies:
-        #         action = await self._define_action(currency)
+            for currency in currencies:
+                action = await self._define_action(currency)
 
-        #         if action == RequestCurrenciesAction.SKIP:
-        #             continue
+                if action == RequestCurrenciesAction.SKIP:
+                    continue
 
-        #         await self._create_currency_price(currency)
-        #         if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
-        #             pass
-        #         if action == RequestCurrenciesAction.SELL:
-        #             await self._sell_currency(context, currency)
+                await self._create_currency_price(currency)
+                if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
+                    pass
+                if action == RequestCurrenciesAction.SELL:
+                    await self._sell_currency(context, currency)
 
-        # except CmcException as ex:
-        #     await context.bot.send_message(self.chat_id, str(ex))
-        # except BinanceException as ex:
-        #     await context.bot.send_message(self.chat_id, str(ex))
+        except CmcException as ex:
+            await context.bot.send_message(self.chat_id, str(ex))
+        except BinanceException as ex:
+            await context.bot.send_message(self.chat_id, str(ex))
