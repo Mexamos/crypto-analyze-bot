@@ -11,11 +11,11 @@ class Config:
         self.request_currencies_interval = self.config.getint(
             'telegram_controller', 'request_currencies_interval', fallback=15
         )
-        self.currencies_number_in_top_for_purchase = self.config.getint(
-            'telegram_controller', 'currencies_number_in_top_for_purchase', fallback=5
-        )
         self.percentage_difference_for_sale = self.config.getfloat(
             'telegram_controller', 'percentage_difference_for_sale', fallback=0.1
+        )
+        self.timezone_name = self.config.get(
+            'telegram_controller', 'timezone_name', fallback='UTC'
         )
         self.currency_conversion = self.config.get(
             'telegram_controller', 'currency_conversion', fallback='USDT'

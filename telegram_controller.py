@@ -1,11 +1,13 @@
 import math
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal
 from enum import Enum
 from typing import List
 
 from telegram import Update
+from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
+from pytz import timezone
 
 from database.client import DatabaseClient
 from coinmarketcap_client import CoinmarketcapClient, CmcException
@@ -38,6 +40,9 @@ class TelegramController:
         self.app = Application.builder().token(token).build()
         self.chat_id = int(chat_id)
 
+        self.timezone = timezone(self.config.timezone_name)
+
+        self.app.add_handler(CommandHandler("stop", self.force_stop))
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
         self.app.add_handler(CommandHandler("list_current_currencies", self.list_current_currencies))
@@ -49,6 +54,10 @@ class TelegramController:
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    async def force_stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        self.app.stop_running()
+        await update.message.reply_text('Bot is stopped')
 
     async def prices_on_chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:
@@ -80,9 +89,15 @@ class TelegramController:
         if update.message.chat_id != self.chat_id:
             return
 
-        currencies = self.db_client.find_currency_price_symbols()
-        if len(currencies) > 0:
-            await update.message.reply_text('\n'.join(currencies))
+        currency_prices = self.db_client._find_first_currency_prices_grouped_by_symbol()
+        if len(currency_prices) > 0:
+            currency_prices = [
+                f'{cp[1]}' + ((10 - len(cp[1])) * ' ') + 
+                f'{datetime.strptime(cp[4], "%Y-%m-%d %H:%M:%S.%f").strftime("%d.%m.%Y %H:%M:%S")}'
+                for cp in currency_prices
+            ]
+            result_string = '```\n' + '\n'.join(currency_prices) + '```'
+            await update.message.reply_text(result_string, parse_mode=ParseMode.MARKDOWN_V2)
         else:
             await update.message.reply_text('Currency price data not found')
 
@@ -150,7 +165,7 @@ class TelegramController:
             symbol=currency['symbol'],
             price=currency['quote']['USD']['price'],
             percent_change_24h=currency['quote']['USD']['percent_change_24h'],
-            date_time=datetime.now(timezone.utc),
+            date_time=datetime.now(self.timezone),
         )
 
     async def caclculate_income_value(self, currency: dict) -> Decimal:
@@ -164,7 +179,7 @@ class TelegramController:
 
     async def _create_income(self, currency: dict):
         value = await self.caclculate_income_value(currency)
-        date_time = datetime.now(timezone.utc)
+        date_time = datetime.now(self.timezone)
         self.db_client.create_income(
             symbol=currency['symbol'],
             value=value,

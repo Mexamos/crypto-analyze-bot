@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from sqlalchemy import create_engine, select, delete
+from sqlalchemy import create_engine, select, delete, text
 from sqlalchemy.orm import Session
 
 from database.models import Base, CurrencyPrice, Income
@@ -28,6 +28,14 @@ class DatabaseClient:
         session = Session(self.engine)
         stmt = select(CurrencyPrice.symbol).distinct()
         return session.scalars(stmt).all()
+
+    def _find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
+        session = Session(self.engine)
+        query = text('''
+            SELECT id, symbol, price, percent_change_24h, MIN(date_time) 
+            FROM currency_price GROUP BY symbol ORDER BY id;
+        ''')
+        return session.execute(query).all()
 
     def create_currency_price(
         self, symbol: str, price, percent_change_24h, date_time

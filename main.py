@@ -23,10 +23,6 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
-# TODO Добавить к списку текущих валют дату покупки
-
-# TODO Change timezone
-
 # TODO Добавить изменение конфига на лету
 
 # TODO Добавить отлавливание остановки бота и слать сообщение, что бот был остановлен
