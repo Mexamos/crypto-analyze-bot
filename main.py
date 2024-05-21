@@ -23,8 +23,6 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
-# TODO Добавить изменение конфига на лету
-
 # TODO Добавить отлавливание остановки бота и слать сообщение, что бот был остановлен
 # + слать отчет по прибыли и по не проданным валютам
 
