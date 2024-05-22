@@ -23,17 +23,28 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
-# TODO Добавить отлавливание остановки бота и слать сообщение, что бот был остановлен
-# + слать отчет по прибыли и по не проданным валютам
+
+# TODO добавить команду health
+# проверить что таска работает
+# получить последнюю запись в таблицу CurrencyPrice
+# Сделать запись в гугл таблицу и вернуть ссылку на эту тестовую таблицу
+# Добавить в класс CoinmarketcapClient параметр дата последнего запроса, возвращать эту дату
+
+# TODO Считывать данные из Unsold и добавлять в таблицу CurrencyPrice перед запуском
+
+# /Users/mexamos/code/python-lang/crypto-analyze-bot/venv/lib/python3.9/site-packages/pandas/plotting/_matplotlib/core.py:580: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
+#   fig = self.plt.figure(figsize=self.figsize)
+
+
+
+# TODO остановка торговли - постепенная остановка и продажа всего
+
+# TODO подумать на счет валют которые долго висят на балансе и не продаются
 
 # TODO Добавить команду завершения торговли
 # Прекращает покупку, при продаже последней валюты, останавливает бота
 
-# TODO добавить команду health
-
 # TODO написать Readme.md
-
-# TODO подумать на счет валют которые долго висят на балансе и не продаются
 
 def main():
     config = Config()

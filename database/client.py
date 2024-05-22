@@ -29,7 +29,7 @@ class DatabaseClient:
         stmt = select(CurrencyPrice.symbol).distinct()
         return session.scalars(stmt).all()
 
-    def _find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
+    def find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
         session = Session(self.engine)
         query = text('''
             SELECT id, symbol, price, percent_change_24h, MIN(date_time) 
@@ -66,6 +66,14 @@ class DatabaseClient:
         session = Session(self.engine)
         stmt = select(Income.symbol).distinct()
         return session.scalars(stmt).all()
+
+    def find_income_sum_by_symbol(self) -> List[Income]:
+        session = Session(self.engine)
+        query = text('''
+            SELECT symbol, sum(value)
+            FROM income GROUP BY symbol;                     
+        ''')
+        return session.execute(query).all()
 
     def create_income(
         self, symbol: str, value, date_time

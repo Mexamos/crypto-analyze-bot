@@ -19,6 +19,7 @@ class Config:
         self.parameter_list = [
             'request_currencies_interval',
             'percentage_difference_for_sale',
+            'value_difference_for_sale',
             'timezone_name',
             'currency_conversion',
             'transactions_amount',
@@ -32,9 +33,14 @@ class Config:
         self.percentage_difference_for_sale = self.config.getfloat(
             'telegram_controller', 'percentage_difference_for_sale', fallback=0.1
         )
+        self.value_difference_for_sale = self.config.getint(
+            'telegram_controller', 'value_difference_for_sale', fallback=100
+        )
+
         self.timezone_name = self.config.get(
             'telegram_controller', 'timezone_name', fallback='UTC'
         )
+
         self.currency_conversion = self.config.get(
             'telegram_controller', 'currency_conversion', fallback='USDT'
         )
