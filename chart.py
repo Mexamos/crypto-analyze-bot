@@ -56,6 +56,8 @@ class ChartController:
         fig.savefig(plot_file, format='png')
         plot_file.seek(0)
 
+        plt.close('all')
+
         return plot_file
 
     def generate_chart_image(self, symbol: str) -> BytesIO:

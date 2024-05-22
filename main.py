@@ -32,17 +32,14 @@ SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 # TODO Считывать данные из Unsold и добавлять в таблицу CurrencyPrice перед запуском
 
-# /Users/mexamos/code/python-lang/crypto-analyze-bot/venv/lib/python3.9/site-packages/pandas/plotting/_matplotlib/core.py:580: RuntimeWarning: More than 20 figures have been opened. Figures created through the pyplot interface (`matplotlib.pyplot.figure`) are retained until explicitly closed and may consume too much memory. (To control this warning, see the rcParam `figure.max_open_warning`). Consider using `matplotlib.pyplot.close()`.
-#   fig = self.plt.figure(figsize=self.figsize)
-
-
-
-# TODO остановка торговли - постепенная остановка и продажа всего
-
-# TODO подумать на счет валют которые долго висят на балансе и не продаются
-
 # TODO Добавить команду завершения торговли
 # Прекращает покупку, при продаже последней валюты, останавливает бота
+
+
+
+
+
+# TODO подумать на счет валют которые долго висят на балансе и не продаются
 
 # TODO написать Readme.md
 
