@@ -23,12 +23,6 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
-# TODO Добавить команду завершения торговли
-# Прекращает покупку, при продаже последней валюты, останавливает бота
-
-
-
-
 # TODO подумать на счет валют которые долго висят на балансе и не продаются
 
 # TODO написать Readme.md

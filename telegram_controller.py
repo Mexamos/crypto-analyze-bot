@@ -45,6 +45,8 @@ class TelegramController:
         self.timezone = timezone(self.config.timezone_name)
         self.launch_datetime = datetime.now(self.timezone)
 
+        self.stop_buying_flag = False
+
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
         self.app.add_handler(CommandHandler("list_current_currencies", self.list_current_currencies))
@@ -53,6 +55,8 @@ class TelegramController:
         self.app.add_handler(CommandHandler("health", self.health))
         self.app.add_handler(CommandHandler("get_config", self.get_config))
         self.app.add_handler(CommandHandler("change_config", self.change_config))
+        self.app.add_handler(CommandHandler("stop_buying", self.stop_trading))
+        self.app.add_handler(CommandHandler("start_buying", self.start_trading))
         self.app.add_handler(CommandHandler("stop", self.stop))
 
         job_queue = self.app.job_queue
@@ -73,7 +77,22 @@ class TelegramController:
         # Run the bot until the user presses Ctrl-C
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
 
+    async def stop_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
+        self.stop_buying_flag = True
+
+    async def start_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
+        self.stop_buying_flag = False
+
     async def stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
         jobs = context.job_queue.get_jobs_by_name('request_currencies')
         if len(jobs) > 0:
             (job, ) = jobs
@@ -198,7 +217,7 @@ class TelegramController:
         if len(currency_prices) > 0:
             currency_prices = [
                 f'{cp[1]}' + ((10 - len(cp[1])) * ' ') + 
-                f'{datetime.strptime(cp[4], "%Y-%m-%d %H:%M:%S.%f").strftime("%d.%m.%Y %H:%M:%S")}'
+                f'{datetime.strptime(cp[3], "%Y-%m-%d %H:%M:%S.%f").strftime("%d.%m.%Y %H:%M:%S")}'
                 for cp in currency_prices
             ]
             result_string = '```\n' + '\n'.join(currency_prices) + '```'
@@ -245,7 +264,7 @@ class TelegramController:
         currency_prices = self.db_client.find_currency_price_by_symbol(currency['symbol'])
 
         if len(currency_prices) == 0:
-            if await self._is_funds_to_buy_new_currency():
+            if await self._is_funds_to_buy_new_currency() and not self.stop_buying_flag:
                 return RequestCurrenciesAction.BUY
             else:
                 return RequestCurrenciesAction.SKIP
@@ -329,6 +348,7 @@ class TelegramController:
                     date_time=datetime.now(self.timezone),
                 )
                 if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
+                    # TODO add convert from self.config.currency_conversion request
                     pass
                 if action == RequestCurrenciesAction.SELL:
                     await self._sell_currency(
