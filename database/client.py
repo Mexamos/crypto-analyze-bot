@@ -32,19 +32,18 @@ class DatabaseClient:
     def find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
         session = Session(self.engine)
         query = text('''
-            SELECT id, symbol, price, percent_change_24h, MIN(date_time) 
+            SELECT id, symbol, price, MIN(date_time) 
             FROM currency_price GROUP BY symbol ORDER BY id;
         ''')
         return session.execute(query).all()
 
     def create_currency_price(
-        self, symbol: str, price, percent_change_24h, date_time
+        self, symbol: str, price, date_time
     ):
         with Session(self.engine) as session:
             currency = CurrencyPrice(
                 symbol=symbol,
                 price=price,
-                percent_change_24h=percent_change_24h,
                 date_time=date_time,
             )
             session.add(currency)

@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import List
 
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build, Resource
@@ -19,6 +20,14 @@ class GoogleSheetAppendUnsoldCurrencyFailed(GoogleSheetsClientException):
 
 
 class GoogleSheetAppendIncomesReportFailed(GoogleSheetsClientException):
+    pass
+
+
+class GoogleSheetDeleteUnsoldCurrenciesFailed(GoogleSheetsClientException):
+    pass
+
+
+class GoogleSheetGetUnsoldCurrenciesFailed(GoogleSheetsClientException):
     pass
 
 
@@ -81,4 +90,33 @@ class GoogleSheetsClient:
         except HttpError as error:
             raise GoogleSheetAppendIncomesReportFailed(
                 f'Google sheet append incomes report failed {error}'
+            )
+
+    def get_unsold_currencies(self) -> List[List[str]]:
+        try:
+            result = (
+                self.service.spreadsheets().values().get(
+                    spreadsheetId=self.spreadsheet_id,
+                    range='Unsold!A:C'
+                ).execute()
+            )
+            return result.get("values", [])
+        except HttpError as error:
+            raise GoogleSheetGetUnsoldCurrenciesFailed(
+                f'Google sheet get unsold currencies failed {error}'
+            )
+
+    def delete_unsold_currencies(self):
+        try:
+            body = {
+                'ranges': ['Unsold']
+            }
+
+            self.service.spreadsheets().values().batchClear(
+                spreadsheetId=self.spreadsheet_id,
+                body=body
+            ).execute()
+        except HttpError as error:
+            raise GoogleSheetDeleteUnsoldCurrenciesFailed(
+                f'Google sheet delete unsold currencies failed {error}'
             )

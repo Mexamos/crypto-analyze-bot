@@ -15,7 +15,6 @@ class CurrencyPrice(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     symbol: Mapped[str] = mapped_column(String(10))
     price: Mapped[Decimal] = mapped_column(DECIMAL(50, 30))
-    percent_change_24h: Mapped[Decimal] = mapped_column(DECIMAL(50, 30))
     date_time: Mapped[datetime] = mapped_column(DateTime)
 
 

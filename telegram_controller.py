@@ -57,6 +57,17 @@ class TelegramController:
         job_queue = self.app.job_queue
         job_queue.run_repeating(self.request_currencies, interval=self.config.request_currencies_interval)
 
+    def restore_unsold_currencies(self):
+        rows = self.google_sheets_client.get_unsold_currencies()
+        for row in rows:
+            self._create_currency_price(
+                symbol=row[1],
+                price=Decimal(row[2]),
+                date_time=datetime.strptime(row[0], "%d.%m.%Y %H:%M:%S"),
+            )
+
+        self.google_sheets_client.delete_unsold_currencies()
+
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
@@ -232,12 +243,11 @@ class TelegramController:
 
         return RequestCurrenciesAction.SELL
 
-    async def _create_currency_price(self, currency: dict):
+    def _create_currency_price(self, symbol: str, price, date_time: datetime):
         self.db_client.create_currency_price(
-            symbol=currency['symbol'],
-            price=currency['quote']['USD']['price'],
-            percent_change_24h=currency['quote']['USD']['percent_change_24h'],
-            date_time=datetime.now(self.timezone),
+            symbol=symbol,
+            price=price,
+            date_time=date_time,
         )
 
     async def _caclculate_income_value(self, symbol: str, price: Decimal) -> Decimal:
@@ -257,7 +267,7 @@ class TelegramController:
         )
 
         self.google_sheets_client.append_income(
-            date_time, symbol, scientific_notation_to_usual_format(value)
+            date_time, symbol, float(value)
         )
 
     async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str, price: Decimal):
@@ -288,7 +298,11 @@ class TelegramController:
                 if action == RequestCurrenciesAction.SKIP:
                     continue
 
-                await self._create_currency_price(currency)
+                self._create_currency_price(
+                    symbol=currency['symbol'],
+                    price=currency['quote']['USD']['price'],
+                    date_time=datetime.now(self.timezone),
+                )
                 if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
                     pass
                 if action == RequestCurrenciesAction.SELL:

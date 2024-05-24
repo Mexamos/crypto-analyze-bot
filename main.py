@@ -30,8 +30,6 @@ SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 # Сделать запись в гугл таблицу и вернуть ссылку на эту тестовую таблицу
 # Добавить в класс CoinmarketcapClient параметр дата последнего запроса, возвращать эту дату
 
-# TODO Считывать данные из Unsold и добавлять в таблицу CurrencyPrice перед запуском
-
 # TODO Добавить команду завершения торговли
 # Прекращает покупку, при продаже последней валюты, останавливает бота
 
@@ -56,6 +54,7 @@ def main():
     telegram_controller = TelegramController(
         db_client, cmc_client, binance_cleint, chart_controller, google_sheets_client, config, TOKEN, BOT_CHAT_ID
     )
+    telegram_controller.restore_unsold_currencies()
     telegram_controller.run_bot()
 
 

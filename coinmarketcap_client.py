@@ -6,13 +6,6 @@
 # orderId
 
 
-# Структура данных для бота анализатора - смотри что возвращают CMC ендпоинты
-# symbol
-# quote.USD.price
-# quote.USD.percent_change_24h
-# текущий date_time
-
-
 # Trending Gainers & Losers
 # https://coinmarketcap.com/api/documentation/v1/#operation/getV1CryptocurrencyTrendingGainerslosers
 
