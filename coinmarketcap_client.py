@@ -12,10 +12,14 @@
 # Trending Latest
 # https://coinmarketcap.com/api/documentation/v1/#operation/getV1CryptocurrencyTrendingLatest
 
+from datetime import datetime
 from typing import List
 
+from pytz import timezone
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
+
+from config import Config
 
 
 class CmcException(Exception):
@@ -24,9 +28,13 @@ class CmcException(Exception):
 
 class CoinmarketcapClient:
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, config: Config) -> None:
         self.host = 'https://pro-api.coinmarketcap.com'
         self.api_key = api_key
+
+        self.config = config
+        self.timezone = timezone(self.config.timezone_name)
+        self.latest_request_datetime = None
 
     def _trending_latest(self):
         url = self.host + '/v1/cryptocurrency/trending/latest'
@@ -45,7 +53,10 @@ class CoinmarketcapClient:
 
         try:
             response = session.get(url, params=parameters)
-            return response.json()
+            json_result = response.json()
+
+            self.latest_request_datetime = datetime.now(self.timezone)
+            return json_result
         except (ConnectionError, Timeout, TooManyRedirects) as ex:
             raise CmcException(str(ex))
 

@@ -31,6 +31,10 @@ class GoogleSheetGetUnsoldCurrenciesFailed(GoogleSheetsClientException):
     pass
 
 
+class GoogleSheetAppendToTestConnectionFailed(GoogleSheetsClientException):
+    pass
+
+
 class GoogleSheetsClient:
 
     scopes = ['https://www.googleapis.com/auth/spreadsheets']
@@ -119,4 +123,20 @@ class GoogleSheetsClient:
         except HttpError as error:
             raise GoogleSheetDeleteUnsoldCurrenciesFailed(
                 f'Google sheet delete unsold currencies failed {error}'
+            )
+
+    def append_to_test_connection(self, date_time: datetime):
+        try:
+            body = {'values': [[
+                date_time.strftime('%d.%m.%Y %H:%M:%S')
+            ]]}
+            self.service.spreadsheets().values().append(
+                spreadsheetId=self.spreadsheet_id,
+                range='Test connection!A:A',
+                valueInputOption='RAW',
+                body=body,
+            ).execute()
+        except HttpError as error:
+            raise GoogleSheetAppendToTestConnectionFailed(
+                f'Google sheet append to test connection failed {error}'
             )

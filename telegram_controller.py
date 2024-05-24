@@ -50,6 +50,7 @@ class TelegramController:
         self.app.add_handler(CommandHandler("list_current_currencies", self.list_current_currencies))
         self.app.add_handler(CommandHandler("list_income_currencies", self.list_income_currencies))
 
+        self.app.add_handler(CommandHandler("health", self.health))
         self.app.add_handler(CommandHandler("get_config", self.get_config))
         self.app.add_handler(CommandHandler("change_config", self.change_config))
         self.app.add_handler(CommandHandler("stop", self.stop))
@@ -90,6 +91,9 @@ class TelegramController:
 
         for currency in bought_currencies:
             currency_prices = self.db_client.find_currency_price_by_symbol(currency)
+            if len(currency_prices) == 0:
+                continue
+
             first = currency_prices[0]
             last = currency_prices[len(currency_prices) - 1]
 
@@ -118,6 +122,27 @@ class TelegramController:
             self.launch_datetime, datetime.now(self.timezone),
             currencies_string, scientific_notation_to_usual_format(income_amount)
         )
+
+    async def health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+        
+        jobs = context.job_queue.get_jobs_by_name('request_currencies')
+
+        currency_prices_count = self.db_client.count_all_currency_price()
+
+        self.google_sheets_client.append_to_test_connection(datetime.now(self.timezone))
+        google_sheet_link = f'https://docs.google.com/spreadsheets/d/{self.google_sheets_client.spreadsheet_id}/'
+
+        coin_market_cap_latest_request_datetime = (
+            self.cmc_client.latest_request_datetime.strftime("%d.%m.%Y %H:%M:%S")
+            if self.cmc_client.latest_request_datetime else None
+        )
+
+        await update.message.reply_text(f'task_is_running={len(jobs) > 0}')
+        await update.message.reply_text(f'currency_prices_count={currency_prices_count}')
+        await update.message.reply_text(f'google_sheet_link={google_sheet_link}')
+        await update.message.reply_text(f'coin_market_cap_latest_request_datetime={coin_market_cap_latest_request_datetime}')
 
     async def get_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:

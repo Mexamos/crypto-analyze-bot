@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from sqlalchemy import create_engine, select, delete, text
+from sqlalchemy import create_engine, select, delete, text, func
 from sqlalchemy.orm import Session
 
 from database.models import Base, CurrencyPrice, Income
@@ -15,6 +15,10 @@ class DatabaseClient:
 
     def get_connection(self):
         return self.engine.connect()
+
+    def count_all_currency_price(self) -> int:
+        session = Session(self.engine)
+        return session.query(func.count(CurrencyPrice.id)).scalar()
 
     def get_currency_price_query(self, symbol: str):
         return select(CurrencyPrice).where(CurrencyPrice.symbol == symbol)

@@ -23,16 +23,8 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
 SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
-
-# TODO добавить команду health
-# проверить что таска работает
-# получить последнюю запись в таблицу CurrencyPrice
-# Сделать запись в гугл таблицу и вернуть ссылку на эту тестовую таблицу
-# Добавить в класс CoinmarketcapClient параметр дата последнего запроса, возвращать эту дату
-
 # TODO Добавить команду завершения торговли
 # Прекращает покупку, при продаже последней валюты, останавливает бота
-
 
 
 
@@ -48,7 +40,7 @@ def main():
     chart_controller = ChartController(db_client, config)
     google_sheets_client = GoogleSheetsClient(CREDENTIALS_FILE_PATH, SPREADSHEET_ID)
 
-    cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY)
+    cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY, config)
     binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
     telegram_controller = TelegramController(
