@@ -17,9 +17,10 @@ class Config:
         self.config.read('config.ini')
 
         self.parameter_list = [
-            'request_currencies_interval',
+            'process_trending_currencies_interval',
             'percentage_difference_for_sale',
             'value_difference_for_sale',
+            'process_out_of_trend_currencies_interval',
             'timezone_name',
             'currency_conversion',
             'transactions_amount',
@@ -27,14 +28,18 @@ class Config:
             'round_plot_numbers_to',
         ]
 
-        self.request_currencies_interval = self.config.getint(
-            'telegram_controller', 'request_currencies_interval', fallback=15
+        self.process_trending_currencies_interval = self.config.getint(
+            'telegram_controller', 'process_trending_currencies_interval', fallback=40
         )
         self.percentage_difference_for_sale = self.config.getfloat(
             'telegram_controller', 'percentage_difference_for_sale', fallback=0.1
         )
         self.value_difference_for_sale = self.config.getint(
             'telegram_controller', 'value_difference_for_sale', fallback=100
+        )
+
+        self.process_out_of_trend_currencies_interval = self.config.getint(
+            'telegram_controller', 'process_out_of_trend_currencies_interval', fallback=20
         )
 
         self.timezone_name = self.config.get(

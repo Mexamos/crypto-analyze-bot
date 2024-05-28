@@ -10,7 +10,7 @@ class DatabaseClient:
 
     def __init__(self) -> None:
         # in-memory database
-        self.engine = create_engine("sqlite://", echo=False)
+        self.engine = create_engine("sqlite://")
         Base.metadata.create_all(self.engine)
 
     def get_connection(self):
@@ -18,7 +18,9 @@ class DatabaseClient:
 
     def count_all_currency_price(self) -> int:
         session = Session(self.engine)
-        return session.query(func.count(CurrencyPrice.id)).scalar()
+        result = session.query(func.count(CurrencyPrice.id)).scalar()
+        session.close()
+        return result
 
     def get_currency_price_query(self, symbol: str):
         return select(CurrencyPrice).where(CurrencyPrice.symbol == symbol)
@@ -26,12 +28,16 @@ class DatabaseClient:
     def find_currency_price_by_symbol(self, symbol: str) -> List[CurrencyPrice]:
         session = Session(self.engine)
         stmt = self.get_currency_price_query(symbol)
-        return session.scalars(stmt).all()
+        result = session.scalars(stmt).all()
+        session.close()
+        return result
 
     def find_currency_price_symbols(self) -> List[str]:
         session = Session(self.engine)
         stmt = select(CurrencyPrice.symbol).distinct()
-        return session.scalars(stmt).all()
+        result = session.scalars(stmt).all()
+        session.close()
+        return result
 
     def find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
         session = Session(self.engine)
@@ -39,7 +45,9 @@ class DatabaseClient:
             SELECT id, symbol, price, MIN(date_time) 
             FROM currency_price GROUP BY symbol ORDER BY id;
         ''')
-        return session.execute(query).all()
+        result = session.execute(query).all()
+        session.close()
+        return result
 
     def create_currency_price(
         self, symbol: str, price, date_time
@@ -68,7 +76,9 @@ class DatabaseClient:
     def find_income_symbols(self) -> List[str]:
         session = Session(self.engine)
         stmt = select(Income.symbol).distinct()
-        return session.scalars(stmt).all()
+        result = session.scalars(stmt).all()
+        session.close()
+        return result
 
     def find_income_sum_by_symbol(self) -> List[Income]:
         session = Session(self.engine)
@@ -76,7 +86,9 @@ class DatabaseClient:
             SELECT symbol, sum(value)
             FROM income GROUP BY symbol;                     
         ''')
-        return session.execute(query).all()
+        result = session.execute(query).all()
+        session.close()
+        return result
 
     def create_income(
         self, symbol: str, value, date_time

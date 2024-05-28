@@ -47,10 +47,13 @@ class TelegramController:
 
         self.stop_buying_flag = False
 
+        self.out_of_trend_currencies = set()
+
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
         self.app.add_handler(CommandHandler("list_current_currencies", self.list_current_currencies))
         self.app.add_handler(CommandHandler("list_income_currencies", self.list_income_currencies))
+        self.app.add_handler(CommandHandler("list_out_of_trend_currencies", self.list_out_of_trend_currencies))
 
         self.app.add_handler(CommandHandler("health", self.health))
         self.app.add_handler(CommandHandler("get_config", self.get_config))
@@ -60,7 +63,8 @@ class TelegramController:
         self.app.add_handler(CommandHandler("stop", self.stop))
 
         job_queue = self.app.job_queue
-        job_queue.run_repeating(self.request_currencies, interval=self.config.request_currencies_interval)
+        job_queue.run_repeating(self.process_trending_currencies, interval=self.config.process_trending_currencies_interval)
+        job_queue.run_repeating(self.process_out_of_trend_currencies, interval=self.config.process_out_of_trend_currencies_interval)
 
     def restore_unsold_currencies(self):
         rows = self.google_sheets_client.get_unsold_currencies()
@@ -93,9 +97,8 @@ class TelegramController:
         if update.message.chat_id != self.chat_id:
             return
 
-        jobs = context.job_queue.get_jobs_by_name('request_currencies')
-        if len(jobs) > 0:
-            (job, ) = jobs
+        jobs =  context.job_queue.jobs()
+        for job in jobs:
             job.schedule_removal()
 
         await self._sell_or_record_to_table_rest_currencies(context)
@@ -145,8 +148,8 @@ class TelegramController:
     async def health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:
             return
-        
-        jobs = context.job_queue.get_jobs_by_name('request_currencies')
+
+        jobs = context.job_queue.jobs()
 
         currency_prices_count = self.db_client.count_all_currency_price()
 
@@ -158,7 +161,7 @@ class TelegramController:
             if self.cmc_client.latest_request_datetime else None
         )
 
-        await update.message.reply_text(f'task_is_running={len(jobs) > 0}')
+        await update.message.reply_text(f'number_running_tasks={len(jobs)}')
         await update.message.reply_text(f'currency_prices_count={currency_prices_count}')
         await update.message.reply_text(f'google_sheet_link={google_sheet_link}')
         await update.message.reply_text(f'coin_market_cap_latest_request_datetime={coin_market_cap_latest_request_datetime}')
@@ -235,6 +238,15 @@ class TelegramController:
         else:
             await update.message.reply_text('Income data not found')
 
+    async def list_out_of_trend_currencies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id != self.chat_id:
+            return
+
+        if len(self.out_of_trend_currencies) > 0:
+            await update.message.reply_text('\n'.join(list(self.out_of_trend_currencies)))
+        else:
+            await update.message.reply_text('Out of trend currencies not found')
+
     async def _filter_currencies_by_binance(self, currencies: List[dict]) -> List[dict]:
         available_currencies = []
         for currency in currencies:
@@ -260,8 +272,8 @@ class TelegramController:
 
         return len(bought_currencies) < number_available_currencies
 
-    async def _define_action(self, currency: dict) -> RequestCurrenciesAction:
-        currency_prices = self.db_client.find_currency_price_by_symbol(currency['symbol'])
+    async def _define_action(self, symbol: str, price: Decimal) -> RequestCurrenciesAction:
+        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
 
         if len(currency_prices) == 0:
             if await self._is_funds_to_buy_new_currency() and not self.stop_buying_flag:
@@ -271,12 +283,11 @@ class TelegramController:
 
         currency_price = currency_prices[0]
         old_price = currency_price.price
-        new_price = Decimal(str(currency['quote']['USD']['price']))
 
-        difference = new_price - old_price
+        difference = price - old_price
 
-        absolute_difference = abs(old_price - new_price)
-        sum_of_values = (old_price + new_price) / 2
+        absolute_difference = abs(old_price - price)
+        sum_of_values = (old_price + price) / 2
         difference_in_percentage = (absolute_difference / sum_of_values) * 100
 
         if difference <= 0 or (
@@ -330,21 +341,29 @@ class TelegramController:
         except (DataForChartNotFound, GoogleSheetAppendIncomeFailed) as ex:
             await context.bot.send_message(self.chat_id, str(ex))
 
-    async def request_currencies(self, context: ContextTypes.DEFAULT_TYPE):
+    async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
-            currencies = self.cmc_client.actual_trending_latest_currencies()
+            currencies = self.cmc_client.get_latest_trending_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
 
+            bought_currencies = set(self.db_client.find_currency_price_symbols())
+
             for currency in currencies:
-                action = await self._define_action(currency)
+                symbol = currency['symbol']
+                price = currency['quote']['USD']['price']
+
+                if symbol in self.out_of_trend_currencies:
+                    continue
+
+                action = await self._define_action(symbol, Decimal(str(price)))
 
                 if action == RequestCurrenciesAction.SKIP:
                     continue
 
                 self._create_currency_price(
-                    symbol=currency['symbol'],
-                    price=currency['quote']['USD']['price'],
+                    symbol=symbol,
+                    price=price,
                     date_time=datetime.now(self.timezone),
                 )
                 if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
@@ -352,10 +371,50 @@ class TelegramController:
                     pass
                 if action == RequestCurrenciesAction.SELL:
                     await self._sell_currency(
-                        context, currency['symbol'], Decimal(str(currency['quote']['USD']['price']))
+                        context, symbol, Decimal(str(price))
                     )
+
+                if symbol in bought_currencies:
+                    bought_currencies.remove(symbol)
+
+            self.out_of_trend_currencies.update(bought_currencies)
 
         except CmcException as ex:
             await context.bot.send_message(self.chat_id, str(ex))
         except BinanceException as ex:
+            await context.bot.send_message(self.chat_id, str(ex))
+        except BaseException as ex:
+            await context.bot.send_message(self.chat_id, str(ex))
+
+    async def _try_to_sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str) -> bool:
+        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+        if len(currency_prices) == 0:
+            return True
+
+        first = currency_prices[0]
+        currency_data = self.cmc_client.get_quotes_latest(symbol)
+        latest_price = Decimal(str(currency_data['data'][symbol][0]['quote']['USD']['price']))
+
+        self._create_currency_price(
+            symbol=symbol,
+            price=latest_price,
+            date_time=datetime.now(self.timezone),
+        )
+
+        if latest_price >= first.price:
+            await self._sell_currency(context, symbol, latest_price)
+            return True
+        else:
+            return False
+
+    async def process_out_of_trend_currencies(self, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            sold_currencies = set()
+            for symbol in self.out_of_trend_currencies:
+                is_currency_sold = await self._try_to_sell_currency(context, symbol)
+                if is_currency_sold:
+                    sold_currencies.add(symbol)
+
+            self.out_of_trend_currencies.difference_update(sold_currencies)
+        except BaseException as ex:
             await context.bot.send_message(self.chat_id, str(ex))

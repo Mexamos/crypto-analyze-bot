@@ -69,10 +69,32 @@ class CoinmarketcapClient:
     def _sort_data(self, currency):
             return currency['quote']['USD']['percent_change_24h']
 
-    def actual_trending_latest_currencies(self) -> List[dict]:
+    def get_latest_trending_currencies(self) -> List[dict]:
         data = self._trending_latest()
 
         filtered_data = filter(self._filter_data, data['data'])
         sorted_data = sorted(filtered_data, key=self._sort_data, reverse=True)
 
         return sorted_data
+
+    def get_quotes_latest(self, symbol: str):
+        url = self.host + '/v2/cryptocurrency/quotes/latest'
+        parameters = {
+            'symbol': symbol
+        }
+        headers = {
+            'Accepts': 'application/json',
+            'X-CMC_PRO_API_KEY': self.api_key,
+        }
+
+        session = Session()
+        session.headers.update(headers)
+
+        try:
+            response = session.get(url, params=parameters)
+            json_result = response.json()
+
+            self.latest_request_datetime = datetime.now(self.timezone)
+            return json_result
+        except (ConnectionError, Timeout, TooManyRedirects) as ex:
+            raise CmcException(str(ex))
