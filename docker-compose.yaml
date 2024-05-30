@@ -1,6 +1,25 @@
+version: "3"
 services:
 
     telegram_bot:
         build: .
         env_file:
             - .env
+
+    agent:
+        image: grafana/agent:latest
+        restart: always
+        ports:
+            - "9411:9411"
+        volumes:
+            - "./grafana/config.yaml:/etc/agent-config/agent.yaml:ro"
+            - "/:/host/root:ro"
+            - "/sys:/host/sys:ro"
+            - "/proc:/host/proc:ro"
+            - "/tmp/agent:/etc/agent"
+        entrypoint:
+            - /bin/grafana-agent
+            - -config.file=/etc/agent-config/agent.yaml
+            - -metrics.wal-directory=/tmp/agent/wal
+        network_mode: "host"
+        pid: "host"

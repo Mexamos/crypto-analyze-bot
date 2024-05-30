@@ -1,0 +1,58 @@
+metrics:
+  wal_directory: /tmp/agent
+  global:
+    scrape_interval: 60s
+    remote_write:
+    - url: https://metrics.cockpit.fr-par.scw.cloud/api/v1/push
+      headers:
+        "X-Token": 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
+
+logs:
+  positions_directory: /tmp/positions/
+  configs:
+  - name: scw
+    clients:
+    - url: https://logs.cockpit.fr-par.scw.cloud/loki/api/v1/push
+      tenant_id: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
+    scrape_configs:
+    - job_name: varlogs
+      static_configs:
+      - targets: [localhost]
+        labels:
+          job: varlogs
+          __path__: /host/root/var/log/*.log
+
+traces:
+  configs:
+  - name: default
+  remote_write:
+    - endpoint: https://traces.cockpit.fr-par.scw.cloud/otlp
+      headers:
+        X-TOKEN: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
+      protocol: http
+      format: otlp
+  receivers:
+        otlp:
+          protocols:
+            grpc:
+            http:
+        zipkin:
+          endpoint: 0.0.0.0:9411
+
+integrations:
+  node_exporter:
+    enabled: true
+    rootfs_path: /host/root
+    sysfs_path: /host/sys
+    procfs_path: /host/proc
+    # Anything not provided in the list below will be disabled by default
+    set_collectors:
+    - uname
+    - cpu
+    - loadavg
+    - meminfo
+    - filesystem
+    - netdev
+    - boottime
+    - time
+    - stat
