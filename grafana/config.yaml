@@ -3,24 +3,9 @@ metrics:
   global:
     scrape_interval: 60s
     remote_write:
-    - url: https://d32023fe-0db9-4636-95a3-eac838c59a63.metrics.cockpit.fr-par.scw.cloud/api/v1/push
+    - url: https://21a026b9-22d2-4926-9bf0-98ad13496816.metrics.cockpit.fr-par.scw.cloud/api/v1/push
       headers:
         "X-Token": 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
-
-logs:
-  positions_directory: /tmp/positions/
-  configs:
-  - name: scw
-    clients:
-    - url: https://723a10dd-3260-4d39-8ae0-8200ceddd597.logs.cockpit.fr-par.scw.cloud/loki/api/v1/push
-      tenant_id: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
-    scrape_configs:
-    - job_name: varlogs
-      static_configs:
-      - targets: [localhost]
-        labels:
-          job: varlogs
-          __path__: /host/root/var/log/*.log
 
 integrations:
   node_exporter:
