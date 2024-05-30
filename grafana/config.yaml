@@ -24,14 +24,14 @@ logs:
 
 traces:
   configs:
-  - name: default
-  remote_write:
-    - endpoint: https://traces.cockpit.fr-par.scw.cloud/otlp
-      headers:
-        X-TOKEN: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
-      protocol: http
-      format: otlp
-  receivers:
+    - name: default
+      remote_write:
+        - endpoint: https://traces.cockpit.fr-par.scw.cloud/otlp
+          headers:
+            X-TOKEN: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
+          protocol: http
+          format: otlp
+      receivers:
         otlp:
           protocols:
             grpc:
@@ -47,12 +47,12 @@ integrations:
     procfs_path: /host/proc
     # Anything not provided in the list below will be disabled by default
     set_collectors:
-    - uname
-    - cpu
-    - loadavg
-    - meminfo
-    - filesystem
-    - netdev
-    - boottime
-    - time
-    - stat
+      - uname
+      - cpu
+      - loadavg
+      - meminfo
+      - filesystem
+      - netdev
+      - boottime
+      - time
+      - stat
