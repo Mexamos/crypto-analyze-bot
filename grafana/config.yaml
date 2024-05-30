@@ -3,7 +3,7 @@ metrics:
   global:
     scrape_interval: 60s
     remote_write:
-    - url: https://metrics.cockpit.fr-par.scw.cloud/api/v1/push
+    - url: https://d32023fe-0db9-4636-95a3-eac838c59a63.metrics.cockpit.fr-par.scw.cloud/api/v1/push
       headers:
         "X-Token": 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
 
@@ -12,7 +12,7 @@ logs:
   configs:
   - name: scw
     clients:
-    - url: https://logs.cockpit.fr-par.scw.cloud/loki/api/v1/push
+    - url: https://723a10dd-3260-4d39-8ae0-8200ceddd597.logs.cockpit.fr-par.scw.cloud/loki/api/v1/push
       tenant_id: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
     scrape_configs:
     - job_name: varlogs
@@ -21,23 +21,6 @@ logs:
         labels:
           job: varlogs
           __path__: /host/root/var/log/*.log
-
-traces:
-  configs:
-    - name: default
-      remote_write:
-        - endpoint: https://traces.cockpit.fr-par.scw.cloud/otlp
-          headers:
-            X-TOKEN: 1qXVccCFdTIghgH9za9PN3YKiiH5-XA1qSC91u9JNbPkjoem1f-PsLJP9_DEqP_T
-          protocol: http
-          format: otlp
-      receivers:
-        otlp:
-          protocols:
-            grpc:
-            http:
-        zipkin:
-          endpoint: 0.0.0.0:9411
 
 integrations:
   node_exporter:
