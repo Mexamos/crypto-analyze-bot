@@ -45,6 +45,8 @@ class BotController:
         self.app = Application.builder().token(token).build()
         self.chat_id = int(chat_id)
 
+        self.known_currencies = set()
+
         self.timezone = timezone(self.config.timezone_name)
         self.launch_datetime = datetime.now(self.timezone)
 
@@ -275,32 +277,6 @@ class BotController:
 
         return len(bought_currencies) < number_available_currencies
 
-    async def _define_action(self, symbol: str, price: Decimal) -> RequestCurrenciesAction:
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
-
-        if len(currency_prices) == 0:
-            if await self._is_funds_to_buy_new_currency() and not self.stop_buying_flag:
-                return RequestCurrenciesAction.BUY
-            else:
-                return RequestCurrenciesAction.SKIP
-
-        currency_price = currency_prices[0]
-        old_price = currency_price.price
-
-        difference = price - old_price
-
-        absolute_difference = abs(old_price - price)
-        sum_of_values = (old_price + price) / 2
-        difference_in_percentage = (absolute_difference / sum_of_values) * 100
-
-        if difference <= 0 or (
-            difference_in_percentage < self.config.percentage_difference_for_sale and
-            difference * self.config.transactions_amount < self.config.value_difference_for_sale
-        ):
-            return RequestCurrenciesAction.ADD_DATA
-
-        return RequestCurrenciesAction.SELL
-
     def _create_currency_price(self, symbol: str, price, date_time: datetime):
         self.db_client.create_currency_price(
             symbol=symbol,
@@ -346,43 +322,70 @@ class BotController:
         except BaseException as ex:
             self.sentry_client.capture_exception(ex)
 
+    async def _is_ready_to_sell(self, symbol: str, price: Decimal) -> bool:
+        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+
+        currency_price = currency_prices[0]
+        old_price = currency_price.price
+
+        difference = price - old_price
+
+        absolute_difference = abs(old_price - price)
+        sum_of_values = (old_price + price) / 2
+        difference_in_percentage = (absolute_difference / sum_of_values) * 100
+
+        if (
+            difference * self.config.transactions_amount >= self.config.value_difference_for_sale
+            or difference_in_percentage >= self.config.percentage_difference_for_sale
+        ):
+            return True
+
+        return False
+
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
             currencies = self.cmc_client.get_latest_trending_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
 
+            if len(self.known_currencies) == 0:
+                self.known_currencies = set([currency['symbol'] for currency in currencies])
+                return
+            
             bought_currencies = set(self.db_client.find_currency_price_symbols())
 
+            new_currencies = set()
             for currency in currencies:
                 symbol = currency['symbol']
                 price = currency['quote']['USD']['price']
 
-                if symbol in self.out_of_trend_currencies:
-                    continue
+                new_currencies.add(symbol)
 
-                action = await self._define_action(symbol, Decimal(str(price)))
-
-                if action == RequestCurrenciesAction.SKIP:
-                    continue
-
-                self._create_currency_price(
-                    symbol=symbol,
-                    price=price,
-                    date_time=datetime.now(self.timezone),
-                )
-                if action in (RequestCurrenciesAction.BUY, RequestCurrenciesAction.ADD_DATA):
-                    # TODO add convert from self.config.currency_conversion request
-                    pass
-                if action == RequestCurrenciesAction.SELL:
-                    await self._sell_currency(
-                        context, symbol, Decimal(str(price))
+                if symbol not in self.known_currencies:
+                    if await self._is_funds_to_buy_new_currency() and not self.stop_buying_flag:
+                        # buy
+                        self._create_currency_price(
+                            symbol=symbol, price=price,
+                            date_time=datetime.now(self.timezone),
+                        )
+                elif symbol in bought_currencies:
+                    # add data
+                    self._create_currency_price(
+                        symbol=symbol, price=price,
+                        date_time=datetime.now(self.timezone),
                     )
+                    if await self._is_ready_to_sell(symbol, price):
+                        # sell
+                        await self._sell_currency(
+                            context, symbol, Decimal(str(price))
+                        )
 
                 if symbol in bought_currencies:
                     bought_currencies.remove(symbol)
 
             self.out_of_trend_currencies.update(bought_currencies)
+
+            self.known_currencies = new_currencies
 
         except CmcException as ex:
             self.sentry_client.capture_exception(ex)
