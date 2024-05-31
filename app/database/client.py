@@ -3,7 +3,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, select, delete, text, func
 from sqlalchemy.orm import Session
 
-from database.models import Base, CurrencyPrice, Income
+from app.database.models import Base, CurrencyPrice, Income
 
 
 class DatabaseClient:

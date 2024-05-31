@@ -9,14 +9,15 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 from pytz import timezone
 
-from database.client import DatabaseClient
-from database.models import CurrencyPrice
-from coinmarketcap_client import CoinmarketcapClient, CmcException
-from binance_client import BinanceClient, BinanceException
-from chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
-from config import Config
-from google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
-from utils import scientific_notation_to_usual_format
+from app.database.client import DatabaseClient
+from app.database.models import CurrencyPrice
+from app.coinmarketcap_client import CoinmarketcapClient, CmcException
+from app.binance_client import BinanceClient
+from app.chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
+from app.config import Config
+from app.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
+from app.utils import scientific_notation_to_usual_format
+from app.sentry import SentryClient
 
 
 class RequestCurrenciesAction(Enum):
@@ -31,7 +32,7 @@ class TelegramController:
     def __init__(
         self, db_client: DatabaseClient, cmc_client: CoinmarketcapClient, binance_cleint: BinanceClient,
         chart_controller: ChartController, google_sheets_client: GoogleSheetsClient,
-        config: Config, token: str, chat_id: str
+        sentry_client: SentryClient, config: Config, token: str, chat_id: str
     ) -> None:
         self.db_client = db_client
         self.cmc_client = cmc_client
@@ -39,6 +40,8 @@ class TelegramController:
         self.chart_controller = chart_controller
         self.google_sheets_client = google_sheets_client
         self.config = config
+        self.sentry_client = sentry_client
+
         self.app = Application.builder().token(token).build()
         self.chat_id = int(chat_id)
 
@@ -184,7 +187,7 @@ class TelegramController:
         try:
             self.config.change_value(context.args[0], context.args[1])
         except BaseException as ex:
-            await update.message.reply_text(f'Exception: {str(ex)}')
+            self.sentry_client.capture_exception(ex)
 
     async def prices_on_chart(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:
@@ -199,7 +202,7 @@ class TelegramController:
             plot_file = self.chart_controller.generate_chart_image(symbol)
             await update.message.reply_photo(plot_file)
         except DataForChartNotFound as ex:
-            await update.message.reply_text(str(ex))
+            self.sentry_client.capture_exception(ex)
 
     async def incomes_table(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:
@@ -210,7 +213,7 @@ class TelegramController:
             table_file = self.chart_controller.generate_incomes_table(symbol)
             await update.message.reply_photo(table_file)
         except DataForIncomesTableNotFound as ex:
-            await update.message.reply_text(str(ex))
+            self.sentry_client.capture_exception(ex)
 
     async def list_current_currencies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.chat_id != self.chat_id:
@@ -339,7 +342,9 @@ class TelegramController:
             # Delete existing currecny prices
             self.db_client.delete_currency_prices(symbol)
         except (DataForChartNotFound, GoogleSheetAppendIncomeFailed) as ex:
-            await context.bot.send_message(self.chat_id, str(ex))
+            self.sentry_client.capture_exception(ex)
+        except BaseException as ex:
+            self.sentry_client.capture_exception(ex)
 
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
@@ -380,11 +385,9 @@ class TelegramController:
             self.out_of_trend_currencies.update(bought_currencies)
 
         except CmcException as ex:
-            await context.bot.send_message(self.chat_id, str(ex))
-        except BinanceException as ex:
-            await context.bot.send_message(self.chat_id, str(ex))
+            self.sentry_client.capture_exception(ex)
         except BaseException as ex:
-            await context.bot.send_message(self.chat_id, str(ex))
+            self.sentry_client.capture_exception(ex)
 
     async def _try_to_sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str) -> bool:
         currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
@@ -417,4 +420,4 @@ class TelegramController:
 
             self.out_of_trend_currencies.difference_update(sold_currencies)
         except BaseException as ex:
-            await context.bot.send_message(self.chat_id, str(ex))
+            self.sentry_client.capture_exception(ex)

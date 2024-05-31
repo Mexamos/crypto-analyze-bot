@@ -26,6 +26,8 @@ class Config:
             'transactions_amount',
             'total_available_amount',
             'round_plot_numbers_to',
+            'sentry_traces_sample_rate',
+            'sentry_profiles_sample_rate',
         ]
 
         self.process_trending_currencies_interval = self.config.getint(
@@ -58,6 +60,13 @@ class Config:
 
         self.round_plot_numbers_to = self.config.getint(
             'chart', 'round_plot_numbers_to', fallback=5
+        )
+
+        self.sentry_traces_sample_rate = self.config.getfloat(
+            'sentry', 'traces_sample_rate', fallback=1.0
+        )
+        self.sentry_profiles_sample_rate = self.config.getfloat(
+            'sentry', 'profiles_sample_rate', fallback=1.0
         )
 
     def change_value(self, name: str, value) -> None:

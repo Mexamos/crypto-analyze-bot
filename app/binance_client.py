@@ -22,9 +22,6 @@ import requests
 # Order status (USER_DATA)
 # Check order status
 
-class BinanceException(Exception):
-    pass
-
 
 class BinanceClient:
 
@@ -44,11 +41,8 @@ class BinanceClient:
             'toAsset': toAsset,
         }
 
-        try:
-            response = requests.get(url, headers=headers, params=params)
-            return response.json()
-        except BaseException as ex:
-            raise BinanceException(str(ex))
+        response = requests.get(url, headers=headers, params=params)
+        return response.json()
 
 
 # # query_string = 'fromAsset=USDT&toAsset=SOL&fromAmount=5'

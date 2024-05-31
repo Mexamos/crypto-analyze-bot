@@ -8,8 +8,8 @@ from matplotlib.axes import Axes
 from matplotlib.table import Table
 from numpy import float64
 
-from database.client import DatabaseClient
-from config import Config
+from app.database.client import DatabaseClient
+from app.config import Config
 
 
 class GenerateChartException(Exception):

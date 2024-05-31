@@ -19,7 +19,7 @@ from pytz import timezone
 from requests import Session
 from requests.exceptions import ConnectionError, Timeout, TooManyRedirects
 
-from config import Config
+from app.config import Config
 
 
 class CmcException(Exception):
@@ -58,7 +58,7 @@ class CoinmarketcapClient:
             self.latest_request_datetime = datetime.now(self.timezone)
             return json_result
         except (ConnectionError, Timeout, TooManyRedirects) as ex:
-            raise CmcException(str(ex))
+            raise CmcException() from ex
 
     def _filter_data(self, currency):
             if currency['quote']['USD']['percent_change_24h'] > 0:
@@ -97,4 +97,4 @@ class CoinmarketcapClient:
             self.latest_request_datetime = datetime.now(self.timezone)
             return json_result
         except (ConnectionError, Timeout, TooManyRedirects) as ex:
-            raise CmcException(str(ex))
+            raise CmcException() from ex
