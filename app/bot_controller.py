@@ -11,13 +11,13 @@ from pytz import timezone
 
 from app.database.client import DatabaseClient
 from app.database.models import CurrencyPrice
-from app.coinmarketcap_client import CoinmarketcapClient, CmcException
-from app.binance_client import BinanceClient
-from app.chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
+from app.crypto.coinmarketcap_client import CoinmarketcapClient, CmcException
+from app.crypto.binance_client import BinanceClient
+from app.analytics.chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
 from app.config import Config
-from app.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
+from app.analytics.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
 from app.utils import scientific_notation_to_usual_format
-from app.sentry import SentryClient
+from app.monitoring.sentry import SentryClient
 
 
 class RequestCurrenciesAction(Enum):
@@ -27,7 +27,7 @@ class RequestCurrenciesAction(Enum):
     SKIP = 4
 
 
-class TelegramController:
+class BotController:
 
     def __init__(
         self, db_client: DatabaseClient, cmc_client: CoinmarketcapClient, binance_cleint: BinanceClient,
