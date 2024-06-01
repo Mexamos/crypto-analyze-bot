@@ -334,7 +334,7 @@ class BotController:
         sum_of_values = (old_price + price) / 2
         difference_in_percentage = (absolute_difference / sum_of_values) * 100
 
-        if (
+        if difference >= 0 and (
             difference * self.config.transactions_amount >= self.config.value_difference_for_sale
             or difference_in_percentage >= self.config.percentage_difference_for_sale
         ):
