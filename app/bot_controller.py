@@ -351,13 +351,13 @@ class BotController:
             if len(self.known_currencies) == 0:
                 self.known_currencies = set([currency['symbol'] for currency in currencies])
                 return
-            
+
             bought_currencies = set(self.db_client.find_currency_price_symbols())
 
             new_currencies = set()
             for currency in currencies:
                 symbol = currency['symbol']
-                price = currency['quote']['USD']['price']
+                price = Decimal(str(currency['quote']['USD']['price']))
 
                 new_currencies.add(symbol)
 
@@ -377,7 +377,7 @@ class BotController:
                     if await self._is_ready_to_sell(symbol, price):
                         # sell
                         await self._sell_currency(
-                            context, symbol, Decimal(str(price))
+                            context, symbol, price
                         )
 
                 if symbol in bought_currencies:
