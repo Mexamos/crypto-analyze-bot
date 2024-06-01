@@ -14,7 +14,7 @@ class Config:
 
     def __init__(self) -> None:
         self.config = configparser.ConfigParser()
-        self.config.read('config.ini')
+        self.config.read('./app/config.ini')
 
         self.parameter_list = [
             'process_trending_currencies_interval',
@@ -31,32 +31,31 @@ class Config:
         ]
 
         self.process_trending_currencies_interval = self.config.getint(
-            'telegram_controller', 'process_trending_currencies_interval', fallback=40
+            'trading_frequency', 'process_trending_currencies_interval', fallback=40
         )
         self.percentage_difference_for_sale = self.config.getfloat(
-            'telegram_controller', 'percentage_difference_for_sale', fallback=0.1
+            'trading_frequency', 'percentage_difference_for_sale', fallback=0.1
         )
         self.value_difference_for_sale = self.config.getint(
-            'telegram_controller', 'value_difference_for_sale', fallback=100
+            'trading_frequency', 'value_difference_for_sale', fallback=100
         )
-
         self.process_out_of_trend_currencies_interval = self.config.getint(
-            'telegram_controller', 'process_out_of_trend_currencies_interval', fallback=20
-        )
-
-        self.timezone_name = self.config.get(
-            'telegram_controller', 'timezone_name', fallback='UTC'
+            'trading_frequency', 'process_out_of_trend_currencies_interval', fallback=20
         )
 
         self.currency_conversion = self.config.get(
-            'telegram_controller', 'currency_conversion', fallback='USDT'
+            'trading_volume', 'currency_conversion', fallback='USDT'
         )
         self.transactions_amount = Decimal(self.config.get(
-            'telegram_controller', 'transactions_amount', fallback='5'
+            'trading_volume', 'transactions_amount', fallback='5'
         ))
         self.total_available_amount = Decimal(self.config.get(
-            'telegram_controller', 'total_available_amount', fallback='100'
+            'trading_volume', 'total_available_amount', fallback='100'
         ))
+
+        self.timezone_name = self.config.get(
+            'common', 'timezone_name', fallback='UTC'
+        )
 
         self.round_plot_numbers_to = self.config.getint(
             'chart', 'round_plot_numbers_to', fallback=5
