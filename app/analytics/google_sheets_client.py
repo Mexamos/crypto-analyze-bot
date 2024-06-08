@@ -61,14 +61,14 @@ class GoogleSheetsClient:
         except HttpError as error:
             raise GoogleSheetAppendIncomeFailed(f'Google sheet append income failed {error}')
 
-    def append_unsold_currency(self, date_time: datetime, symbol: str, price: Decimal):
+    def append_unsold_currency(self, date_time: datetime, cmc_id: int, symbol: str, price: Decimal):
         try:
             body = {'values': [[
-                date_time.strftime('%d.%m.%Y %H:%M:%S'), symbol, str(price)
+                date_time.strftime('%d.%m.%Y %H:%M:%S'), symbol, str(cmc_id), str(price)
             ]]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range='Unsold!A:C',
+                range='Unsold!A:D',
                 valueInputOption='RAW',
                 body=body,
             ).execute()
@@ -101,7 +101,7 @@ class GoogleSheetsClient:
             result = (
                 self.service.spreadsheets().values().get(
                     spreadsheetId=self.spreadsheet_id,
-                    range='Unsold!A:C'
+                    range='Unsold!A:D'
                 ).execute()
             )
             return result.get("values", [])

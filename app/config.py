@@ -20,18 +20,18 @@ class Config:
             'process_trending_currencies_interval',
             'percentage_difference_for_sale',
             'value_difference_for_sale',
-            'process_out_of_trend_currencies_interval',
-            'timezone_name',
+            'currency_expiration_time_in_min',
             'currency_conversion',
             'transactions_amount',
             'total_available_amount',
+            'timezone_name',
             'round_plot_numbers_to',
             'sentry_traces_sample_rate',
             'sentry_profiles_sample_rate',
         ]
 
         self.process_trending_currencies_interval = self.config.getint(
-            'trading_frequency', 'process_trending_currencies_interval', fallback=40
+            'trading_frequency', 'process_trending_currencies_interval', fallback=20
         )
         self.percentage_difference_for_sale = self.config.getfloat(
             'trading_frequency', 'percentage_difference_for_sale', fallback=0.1
@@ -39,8 +39,8 @@ class Config:
         self.value_difference_for_sale = self.config.getint(
             'trading_frequency', 'value_difference_for_sale', fallback=100
         )
-        self.process_out_of_trend_currencies_interval = self.config.getint(
-            'trading_frequency', 'process_out_of_trend_currencies_interval', fallback=20
+        self.currency_expiration_time_in_min = self.config.getint(
+            'trading_frequency', 'currency_expiration_time_in_min', fallback=5
         )
 
         self.currency_conversion = self.config.get(

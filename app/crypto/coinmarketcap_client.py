@@ -77,10 +77,10 @@ class CoinmarketcapClient:
 
         return sorted_data
 
-    def get_quotes_latest(self, symbol: str):
+    def get_quotes_latest(self, cmc_id: int):
         url = self.host + '/v2/cryptocurrency/quotes/latest'
         parameters = {
-            'symbol': symbol
+            'id': cmc_id
         }
         headers = {
             'Accepts': 'application/json',

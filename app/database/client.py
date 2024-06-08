@@ -1,3 +1,5 @@
+from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 
 from sqlalchemy import create_engine, select, delete, text, func
@@ -50,10 +52,11 @@ class DatabaseClient:
         return result
 
     def create_currency_price(
-        self, symbol: str, price, date_time
+        self, cmc_id: int, symbol: str, price: Decimal, date_time: datetime
     ):
         with Session(self.engine) as session:
             currency = CurrencyPrice(
+                cmc_id=cmc_id,
                 symbol=symbol,
                 price=price,
                 date_time=date_time,

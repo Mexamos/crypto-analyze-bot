@@ -2,7 +2,7 @@ import math
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-from typing import List
+from typing import List, Set
 
 from telegram import Update
 from telegram.constants import ParseMode
@@ -47,12 +47,12 @@ class BotController:
 
         self.known_currencies = set()
 
+        self.out_of_trend_currencies = set()
+
         self.timezone = timezone(self.config.timezone_name)
         self.launch_datetime = datetime.now(self.timezone)
 
         self.stop_buying_flag = False
-
-        self.out_of_trend_currencies = set()
 
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
@@ -69,14 +69,14 @@ class BotController:
 
         job_queue = self.app.job_queue
         job_queue.run_repeating(self.process_trending_currencies, interval=self.config.process_trending_currencies_interval)
-        job_queue.run_repeating(self.process_out_of_trend_currencies, interval=self.config.process_out_of_trend_currencies_interval)
 
     def restore_unsold_currencies(self):
         rows = self.google_sheets_client.get_unsold_currencies()
         for row in rows:
             self._create_currency_price(
+                cmc_id=int(row[2]),
                 symbol=row[1],
-                price=Decimal(row[2]),
+                price=Decimal(row[3]),
                 date_time=datetime.strptime(row[0], "%d.%m.%Y %H:%M:%S"),
             )
 
@@ -131,7 +131,8 @@ class BotController:
 
     async def _record_unsold_currency(self, currency_price: CurrencyPrice):
         self.google_sheets_client.append_unsold_currency(
-            currency_price.date_time, currency_price.symbol, currency_price.price
+            currency_price.date_time, currency_price.cmc_id,
+            currency_price.symbol, currency_price.price
         )
 
     async def _generate_incomes_report(self):
@@ -277,8 +278,9 @@ class BotController:
 
         return len(bought_currencies) < number_available_currencies
 
-    def _create_currency_price(self, symbol: str, price, date_time: datetime):
+    def _create_currency_price(self, cmc_id: int, symbol: str, price, date_time: datetime):
         self.db_client.create_currency_price(
+            cmc_id=cmc_id,
             symbol=symbol,
             price=price,
             date_time=date_time,
@@ -342,6 +344,94 @@ class BotController:
 
         return False
 
+    async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, symbol: str) -> bool:
+        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+        if len(currency_prices) == 0:
+            return True
+
+        first = currency_prices[0]
+        currency_data = self.cmc_client.get_quotes_latest(first.cmc_id)
+        latest_price = Decimal(str(currency_data['data'][str(first.cmc_id)]['quote']['USD']['price']))
+
+        now = datetime.now(self.timezone).replace(tzinfo=None)
+        diff_in_min = (now - first.date_time).total_seconds() / 60
+
+        if (
+            latest_price >= first.price or
+            diff_in_min >= self.config.currency_expiration_time_in_min
+        ):
+            await self._sell_currency(context, symbol, latest_price)
+            return True
+        else:
+            return False
+
+    async def _add_data(self, currencies: List[dict], bought_currencies: Set[str]) -> None:
+        for currency in currencies:
+            cmc_id = currency['id']
+            symbol = currency['symbol']
+            price = Decimal(str(currency['quote']['USD']['price']))
+
+            if symbol in bought_currencies:
+                self._create_currency_price(
+                    cmc_id=cmc_id, symbol=symbol, price=price,
+                    date_time=datetime.now(self.timezone),
+                )
+
+    async def _sell_with_profit(
+        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[str]
+    ) -> None:
+        for currency in currencies:
+            symbol = currency['symbol']
+            price = Decimal(str(currency['quote']['USD']['price']))
+
+            if symbol in bought_currencies and await self._is_ready_to_sell(symbol, price):
+                await self._sell_currency(context, symbol, price)
+
+    async def _sell_without_profit(
+        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[str]
+    ) -> None:
+        # update out of trends
+        for currency in currencies:
+            symbol = currency['symbol']
+
+            if symbol in bought_currencies:
+                bought_currencies.remove(symbol)
+
+            if symbol in self.out_of_trend_currencies:
+                self.out_of_trend_currencies.remove(symbol)
+
+        self.out_of_trend_currencies.update(bought_currencies)
+
+        # sell
+        sold_currencies = set()
+        for symbol in self.out_of_trend_currencies:
+            is_currency_sold = await self._sell_currency_without_profit(context, symbol)
+            if is_currency_sold:
+                sold_currencies.add(symbol)
+
+        self.out_of_trend_currencies.difference_update(sold_currencies)
+
+    async def _buy(self, currencies: List[dict]) -> None:
+        new_currencies = set()
+        for currency in currencies:
+            cmc_id = currency['id']
+            symbol = currency['symbol']
+            price = Decimal(str(currency['quote']['USD']['price']))
+
+            new_currencies.add(symbol)
+
+            if (
+                symbol not in self.known_currencies and
+                await self._is_funds_to_buy_new_currency() and
+                not self.stop_buying_flag
+            ):
+                self._create_currency_price(
+                    cmc_id=cmc_id, symbol=symbol, price=price,
+                    date_time=datetime.now(self.timezone),
+                )
+
+        self.known_currencies = new_currencies
+
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
             currencies = self.cmc_client.get_latest_trending_currencies()
@@ -354,73 +444,15 @@ class BotController:
 
             bought_currencies = set(self.db_client.find_currency_price_symbols())
 
-            new_currencies = set()
-            for currency in currencies:
-                symbol = currency['symbol']
-                price = Decimal(str(currency['quote']['USD']['price']))
+            await self._add_data(currencies, bought_currencies)
 
-                new_currencies.add(symbol)
+            await self._sell_with_profit(context, currencies, bought_currencies)
 
-                if symbol not in self.known_currencies:
-                    if await self._is_funds_to_buy_new_currency() and not self.stop_buying_flag:
-                        # buy
-                        self._create_currency_price(
-                            symbol=symbol, price=price,
-                            date_time=datetime.now(self.timezone),
-                        )
-                elif symbol in bought_currencies:
-                    # add data
-                    self._create_currency_price(
-                        symbol=symbol, price=price,
-                        date_time=datetime.now(self.timezone),
-                    )
-                    if await self._is_ready_to_sell(symbol, price):
-                        # sell
-                        await self._sell_currency(
-                            context, symbol, price
-                        )
+            await self._sell_without_profit(context, currencies, bought_currencies.copy())
 
-                if symbol in bought_currencies:
-                    bought_currencies.remove(symbol)
-
-            self.out_of_trend_currencies.update(bought_currencies)
-
-            self.known_currencies = new_currencies
+            await self._buy(currencies)
 
         except CmcException as ex:
             self.sentry_client.capture_exception(ex)
-        except BaseException as ex:
-            self.sentry_client.capture_exception(ex)
-
-    async def _try_to_sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str) -> bool:
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
-        if len(currency_prices) == 0:
-            return True
-
-        first = currency_prices[0]
-        currency_data = self.cmc_client.get_quotes_latest(symbol)
-        latest_price = Decimal(str(currency_data['data'][symbol][0]['quote']['USD']['price']))
-
-        self._create_currency_price(
-            symbol=symbol,
-            price=latest_price,
-            date_time=datetime.now(self.timezone),
-        )
-
-        if latest_price >= first.price:
-            await self._sell_currency(context, symbol, latest_price)
-            return True
-        else:
-            return False
-
-    async def process_out_of_trend_currencies(self, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            sold_currencies = set()
-            for symbol in self.out_of_trend_currencies:
-                is_currency_sold = await self._try_to_sell_currency(context, symbol)
-                if is_currency_sold:
-                    sold_currencies.add(symbol)
-
-            self.out_of_trend_currencies.difference_update(sold_currencies)
         except BaseException as ex:
             self.sentry_client.capture_exception(ex)
