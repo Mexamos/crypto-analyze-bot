@@ -348,8 +348,13 @@ class BotController:
             return True
 
         first = currency_prices[0]
+
         currency_data = self.cmc_client.get_quotes_latest(first.cmc_id)
         latest_price = Decimal(str(currency_data['data'][str(first.cmc_id)]['quote']['USD']['price']))
+        self._create_currency_price(
+            cmc_id=first.cmc_id, symbol=symbol, price=latest_price,
+            date_time=datetime.now(self.timezone),
+        )
 
         now = datetime.now(self.timezone).replace(tzinfo=None)
         diff_in_min = (now - first.date_time).total_seconds() / 60
