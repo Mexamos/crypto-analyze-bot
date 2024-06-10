@@ -1,7 +1,6 @@
 import math
 from datetime import datetime
 from decimal import Decimal
-from enum import Enum
 from typing import List, Set
 
 from telegram import Update
@@ -18,13 +17,6 @@ from app.config import Config
 from app.analytics.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
 from app.utils import scientific_notation_to_usual_format
 from app.monitoring.sentry import SentryClient
-
-
-class RequestCurrenciesAction(Enum):
-    BUY = 1
-    SELL = 2
-    ADD_DATA = 3
-    SKIP = 4
 
 
 class BotController:
@@ -286,24 +278,30 @@ class BotController:
             date_time=date_time,
         )
 
-    async def _caclculate_income_value(self, symbol: str, price: Decimal) -> Decimal:
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
-        currency_price = currency_prices[0]
-        old_price = currency_price.price
-
-        return (price * self.config.transactions_amount) - (old_price * self.config.transactions_amount)
-
     async def _create_income(self, symbol: str, price: Decimal):
-        value = await self._caclculate_income_value(symbol, price)
-        date_time = datetime.now(self.timezone)
+        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+        first_currency_price = currency_prices[0]
+
+        first_price = first_currency_price.price
+        income_value = (price * self.config.transactions_amount) - (first_price * self.config.transactions_amount)
+
+        first_date_time = first_currency_price.date_time
+        last_date_time = datetime.now(self.timezone)
+
+        difference = first_price - price
+        absolute_difference = abs(difference)
+        sum_of_values = (first_price + price) / 2
+        difference_in_percentage = (absolute_difference / sum_of_values) * 100
+
         self.db_client.create_income(
             symbol=symbol,
-            value=value,
-            date_time=date_time,
+            value=income_value,
+            date_time=last_date_time,
         )
 
         self.google_sheets_client.append_income(
-            date_time, symbol, float(value)
+            first_date_time, last_date_time, symbol, float(difference),
+            float(difference_in_percentage), float(income_value)
         )
 
     async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str, price: Decimal):
@@ -360,6 +358,9 @@ class BotController:
             latest_price >= first.price or
             diff_in_min >= self.config.currency_expiration_time_in_min
         ):
+            await context.bot.send_message(
+                self.chat_id, f'sell without profit: {symbol}, {str(latest_price)}, {str(first.price)}, {str(now)}, {str(first.date_time)}, {str(diff_in_min)} {str(self.config.currency_expiration_time_in_min)}'
+            )  # For debug only !!!
             await self._sell_currency(context, symbol, latest_price)
             return True
         else:

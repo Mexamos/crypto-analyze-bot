@@ -47,14 +47,18 @@ class GoogleSheetsClient:
 
         self.service: Resource = build('sheets', 'v4', credentials=self.creds)
 
-    def append_income(self, date_time: datetime, symbol: str, value: str):
+    def append_income(
+        self, first_date_time: datetime, last_date_time: datetime, symbol: str,
+        difference: float, difference_in_percentage: float, income: float
+    ):
         try:
             body = {'values': [[
-                date_time.strftime('%d.%m.%Y %H:%M:%S'), symbol, value
+                first_date_time.strftime('%d.%m.%Y %H:%M:%S'), last_date_time.strftime('%d.%m.%Y %H:%M:%S'),
+                symbol, difference, difference_in_percentage, income
             ]]}
             self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range='Incomes!A:C',
+                range='Incomes!A:F',
                 valueInputOption='RAW',
                 body=body,
             ).execute()
