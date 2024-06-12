@@ -58,6 +58,7 @@ def main():
         chart_controller, google_sheets_client,
         sentry_client, config, TOKEN, BOT_CHAT_ID
     )
+    telegram_controller.init_bot()
     telegram_controller.restore_unsold_currencies()
     telegram_controller.run_bot()
 

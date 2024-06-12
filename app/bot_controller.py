@@ -34,7 +34,7 @@ class BotController:
         self.config = config
         self.sentry_client = sentry_client
 
-        self.app = Application.builder().token(token).build()
+        self.bot_token = token
         self.chat_id = int(chat_id)
 
         self.known_currencies = set()
@@ -45,6 +45,9 @@ class BotController:
         self.launch_datetime = datetime.now(self.timezone)
 
         self.stop_buying_flag = False
+
+    def init_bot(self):
+        self.app = Application.builder().token(self.bot_token).build()
 
         self.app.add_handler(CommandHandler("prices_on_chart", self.prices_on_chart))
         self.app.add_handler(CommandHandler("incomes_table", self.incomes_table))
@@ -283,7 +286,7 @@ class BotController:
         first_currency_price = currency_prices[0]
 
         first_price = first_currency_price.price
-        income_value = (price * self.config.transactions_amount) - (first_price * self.config.transactions_amount)
+        income_value = ((self.config.transactions_amount / first_price) * price) - self.config.transactions_amount
 
         first_date_time = first_currency_price.date_time
         last_date_time = datetime.now(self.timezone)

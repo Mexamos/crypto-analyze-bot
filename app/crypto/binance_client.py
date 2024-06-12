@@ -30,19 +30,22 @@ class BinanceClient:
         self.api_key = api_key
         self.secret_key = secret_key
 
-    def find_exchange_info(self, toAsset: str, fromAsset: str):
-        url = self.host + '/sapi/v1/convert/exchangeInfo'
+    def _call(self, url: str, params: dict):
         headers = {
             'Content-Type': 'application/json',
             'X-MBX-APIKEY': self.api_key
         }
+        response = requests.get(url, headers=headers, params=params)
+        return response.json()
+
+    def find_exchange_info(self, toAsset: str, fromAsset: str):
+        url = self.host + '/sapi/v1/convert/exchangeInfo'
         params = {
             'fromAsset': fromAsset,
             'toAsset': toAsset,
         }
 
-        response = requests.get(url, headers=headers, params=params)
-        return response.json()
+        return self._call(url, params)
 
 
 # # query_string = 'fromAsset=USDT&toAsset=SOL&fromAmount=5'

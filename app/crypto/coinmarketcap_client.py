@@ -36,13 +36,7 @@ class CoinmarketcapClient:
         self.timezone = timezone(self.config.timezone_name)
         self.latest_request_datetime = None
 
-    def _trending_latest(self):
-        url = self.host + '/v1/cryptocurrency/trending/latest'
-        parameters = {
-            'start':'1',
-            'limit':'100',
-            'time_period': '24h',
-        }
+    def _call(self, url: str, params: dict):
         headers = {
             'Accepts': 'application/json',
             'X-CMC_PRO_API_KEY': self.api_key,
@@ -52,13 +46,22 @@ class CoinmarketcapClient:
         session.headers.update(headers)
 
         try:
-            response = session.get(url, params=parameters)
+            response = session.get(url, params=params)
             json_result = response.json()
 
             self.latest_request_datetime = datetime.now(self.timezone)
             return json_result
         except (ConnectionError, Timeout, TooManyRedirects) as ex:
             raise CmcException() from ex
+
+    def _trending_latest(self):
+        url = self.host + '/v1/cryptocurrency/trending/latest'
+        parameters = {
+            'start':'1',
+            'limit':'100',
+            'time_period': '24h',
+        }
+        return self._call(url, parameters)
 
     def _filter_data(self, currency):
             if currency['quote']['USD']['percent_change_24h'] > 0:
@@ -82,19 +85,4 @@ class CoinmarketcapClient:
         parameters = {
             'id': cmc_id
         }
-        headers = {
-            'Accepts': 'application/json',
-            'X-CMC_PRO_API_KEY': self.api_key,
-        }
-
-        session = Session()
-        session.headers.update(headers)
-
-        try:
-            response = session.get(url, params=parameters)
-            json_result = response.json()
-
-            self.latest_request_datetime = datetime.now(self.timezone)
-            return json_result
-        except (ConnectionError, Timeout, TooManyRedirects) as ex:
-            raise CmcException() from ex
+        return self._call(url, parameters)
