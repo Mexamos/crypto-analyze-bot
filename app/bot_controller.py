@@ -37,8 +37,6 @@ class BotController:
         self.bot_token = token
         self.chat_id = int(chat_id)
 
-        self.known_currencies = set()
-
         self.out_of_trend_currencies = set()
 
         self.timezone = timezone(self.config.timezone_name)
@@ -291,11 +289,6 @@ class BotController:
         first_date_time = first_currency_price.date_time
         last_date_time = datetime.now(self.timezone)
 
-        difference = first_price - price
-        absolute_difference = abs(difference)
-        sum_of_values = (first_price + price) / 2
-        difference_in_percentage = (absolute_difference / sum_of_values) * 100
-
         self.db_client.create_income(
             symbol=symbol,
             value=income_value,
@@ -303,17 +296,16 @@ class BotController:
         )
 
         self.google_sheets_client.append_income(
-            first_date_time, last_date_time, symbol, float(difference),
-            float(difference_in_percentage), float(income_value)
+            first_date_time, last_date_time, symbol, float(income_value)
         )
 
     async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str, price: Decimal):
         try:
             # TODO add convert to self.config.currency_conversion request
 
-            # Send result prices chart
-            chart_file = self.chart_controller.generate_chart_image(symbol)
-            await context.bot.send_photo(self.chat_id, chart_file)
+            # # Send result prices chart
+            # chart_file = self.chart_controller.generate_chart_image(symbol)
+            # await context.bot.send_photo(self.chat_id, chart_file)
 
             # Add new income data
             await self._create_income(symbol, price)
@@ -345,7 +337,7 @@ class BotController:
 
         return False
 
-    async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, symbol: str) -> bool:
+    async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, symbol: str):
         currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
         if len(currency_prices) == 0:
             return True
@@ -359,20 +351,7 @@ class BotController:
             date_time=datetime.now(self.timezone),
         )
 
-        now = datetime.now(self.timezone).replace(tzinfo=None)
-        diff_in_min = (now - first.date_time).total_seconds() / 60
-
-        if (
-            latest_price >= first.price or
-            diff_in_min >= self.config.currency_expiration_time_in_min
-        ):
-            await context.bot.send_message(
-                self.chat_id, f'sell without profit: {symbol}, {str(latest_price)}, {str(first.price)}, {str(now)}, {str(first.date_time)}, {str(diff_in_min)} {str(self.config.currency_expiration_time_in_min)}'
-            )  # For debug only !!!
-            await self._sell_currency(context, symbol, latest_price)
-            return True
-        else:
-            return False
+        await self._sell_currency(context, symbol, latest_price)
 
     async def _add_data(self, currencies: List[dict], bought_currencies: Set[str]) -> None:
         for currency in currencies:
@@ -414,23 +393,18 @@ class BotController:
         # sell
         sold_currencies = set()
         for symbol in self.out_of_trend_currencies:
-            is_currency_sold = await self._sell_currency_without_profit(context, symbol)
-            if is_currency_sold:
-                sold_currencies.add(symbol)
+            await self._sell_currency_without_profit(context, symbol)
+            sold_currencies.add(symbol)
 
         self.out_of_trend_currencies.difference_update(sold_currencies)
 
     async def _buy(self, currencies: List[dict]) -> None:
-        new_currencies = set()
         for currency in currencies:
             cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            new_currencies.add(symbol)
-
             if (
-                symbol not in self.known_currencies and
                 await self._is_funds_to_buy_new_currency() and
                 not self.stop_buying_flag
             ):
@@ -439,17 +413,11 @@ class BotController:
                     date_time=datetime.now(self.timezone),
                 )
 
-        self.known_currencies = new_currencies
-
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
             currencies = self.cmc_client.get_latest_trending_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
-
-            if len(self.known_currencies) == 0:
-                self.known_currencies = set([currency['symbol'] for currency in currencies])
-                return
 
             bought_currencies = set(self.db_client.find_currency_price_symbols())
 

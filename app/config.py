@@ -20,7 +20,6 @@ class Config:
             'process_trending_currencies_interval',
             'percentage_difference_for_sale',
             'value_difference_for_sale',
-            'currency_expiration_time_in_min',
             'currency_conversion',
             'transactions_amount',
             'total_available_amount',
@@ -38,9 +37,6 @@ class Config:
         )
         self.value_difference_for_sale = self.config.getint(
             'trading_frequency', 'value_difference_for_sale', fallback=100
-        )
-        self.currency_expiration_time_in_min = self.config.getint(
-            'trading_frequency', 'currency_expiration_time_in_min', fallback=5
         )
 
         self.currency_conversion = self.config.get(
