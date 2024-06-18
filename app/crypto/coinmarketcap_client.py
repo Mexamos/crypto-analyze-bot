@@ -63,6 +63,15 @@ class CoinmarketcapClient:
         }
         return self._call(url, parameters)
 
+    def _trending_gainers_losers(self):
+        url = self.host + '/v1/cryptocurrency/trending/gainers-losers'
+        parameters = {
+            'start':'1',
+            'limit':'100',
+            'time_period': '24h',
+        }
+        return self._call(url, parameters)
+
     def _filter_data(self, currency):
             if currency['quote']['USD']['percent_change_24h'] > 0:
                 return True 
@@ -73,7 +82,7 @@ class CoinmarketcapClient:
             return currency['quote']['USD']['percent_change_24h']
 
     def get_latest_trending_currencies(self) -> List[dict]:
-        data = self._trending_latest()
+        data = self._trending_gainers_losers()
 
         filtered_data = filter(self._filter_data, data['data'])
         sorted_data = sorted(filtered_data, key=self._sort_data, reverse=True)
