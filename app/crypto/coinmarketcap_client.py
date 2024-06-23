@@ -73,13 +73,13 @@ class CoinmarketcapClient:
         return self._call(url, parameters)
 
     def _filter_data(self, currency):
-            if currency['quote']['USD']['percent_change_24h'] > 0:
-                return True 
-            else:
-                return False
+        if currency['quote']['USD']['percent_change_24h'] > 0:
+            return True 
+        else:
+            return False
 
     def _sort_data(self, currency):
-            return currency['quote']['USD']['percent_change_24h']
+        return currency['quote']['USD']['percent_change_24h']
 
     def get_latest_trending_currencies(self) -> List[dict]:
         data = self._trending_gainers_losers()

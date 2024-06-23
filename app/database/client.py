@@ -40,12 +40,26 @@ class DatabaseClient:
         result = session.scalars(stmt).all()
         session.close()
         return result
+    
+    def find_currency_price_by_cmc_id(self, cmc_id: int) -> List[CurrencyPrice]:
+        session = Session(self.engine)
+        stmt = select(CurrencyPrice).where(CurrencyPrice.cmc_id == cmc_id)
+        result = session.scalars(stmt).all()
+        session.close()
+        return result
 
-    def find_first_currency_prices_grouped_by_symbol(self) -> List[CurrencyPrice]:
+    def find_currency_price_cmc_ids(self) -> List[str]:
+        session = Session(self.engine)
+        stmt = select(CurrencyPrice.cmc_id).distinct()
+        result = session.scalars(stmt).all()
+        session.close()
+        return result
+
+    def find_first_currency_prices_grouped_by_cmc_id(self) -> List[CurrencyPrice]:
         session = Session(self.engine)
         query = text('''
-            SELECT id, symbol, price, MIN(date_time) 
-            FROM currency_price GROUP BY symbol ORDER BY id;
+            SELECT id, cmc_id, symbol, price, MIN(date_time) 
+            FROM currency_price GROUP BY cmc_id ORDER BY id;
         ''')
         result = session.execute(query).all()
         session.close()
@@ -64,9 +78,9 @@ class DatabaseClient:
             session.add(currency)
             session.commit()
 
-    def delete_currency_prices(self, symbol: str):
+    def delete_currency_prices(self, cmc_id: int):
         with Session(self.engine) as session:
-            stmt = delete(CurrencyPrice).where(CurrencyPrice.symbol == symbol)
+            stmt = delete(CurrencyPrice).where(CurrencyPrice.cmc_id == cmc_id)
             session.execute(stmt)
             session.commit()
 
@@ -83,21 +97,22 @@ class DatabaseClient:
         session.close()
         return result
 
-    def find_income_sum_by_symbol(self) -> List[Income]:
+    def find_income_sum_by_cmc_id(self) -> List[Income]:
         session = Session(self.engine)
         query = text('''
-            SELECT symbol, sum(value)
-            FROM income GROUP BY symbol;                     
+            SELECT cmc_id, sum(value)
+            FROM income GROUP BY cmc_id;                     
         ''')
         result = session.execute(query).all()
         session.close()
         return result
 
     def create_income(
-        self, symbol: str, value, date_time
+        self, cmc_id: int, symbol: str, value, date_time
     ):
         with Session(self.engine) as session:
             income = Income(
+                cmc_id=cmc_id,
                 symbol=symbol,
                 value=value,
                 date_time=date_time,

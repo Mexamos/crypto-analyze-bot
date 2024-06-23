@@ -107,10 +107,10 @@ class BotController:
         await update.message.reply_text('Bot stopped')
 
     async def _sell_or_record_to_table_rest_currencies(self, context: ContextTypes.DEFAULT_TYPE):
-        bought_currencies = self.db_client.find_currency_price_symbols()
+        bought_currencies = self.db_client.find_currency_price_cmc_ids()
 
-        for currency in bought_currencies:
-            currency_prices = self.db_client.find_currency_price_by_symbol(currency)
+        for cmc_id in bought_currencies:
+            currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
             if len(currency_prices) == 0:
                 continue
 
@@ -118,7 +118,7 @@ class BotController:
             last = currency_prices[len(currency_prices) - 1]
 
             if last.price >= first.price:
-                await self._sell_currency(context, last.symbol, last.price)
+                await self._sell_currency(context, last.cmc_id, last.symbol, last.price)
             else:
                 await self._record_unsold_currency(first)
 
@@ -129,7 +129,7 @@ class BotController:
         )
 
     async def _generate_incomes_report(self):
-        incomes = self.db_client.find_income_sum_by_symbol()
+        incomes = self.db_client.find_income_sum_by_cmc_id()
 
         currencies = []
         income_amount = 0
@@ -215,11 +215,11 @@ class BotController:
         if update.message.chat_id != self.chat_id:
             return
 
-        currency_prices = self.db_client.find_first_currency_prices_grouped_by_symbol()
+        currency_prices = self.db_client.find_first_currency_prices_grouped_by_cmc_id()
         if len(currency_prices) > 0:
             currency_prices = [
-                f'{cp[1]}' + ((10 - len(cp[1])) * ' ') + 
-                f'{datetime.strptime(cp[3], "%Y-%m-%d %H:%M:%S.%f").strftime("%d.%m.%Y %H:%M:%S")}'
+                f'{cp[2]}' + ((10 - len(cp[2])) * ' ') + 
+                f'{datetime.strptime(cp[4], "%Y-%m-%d %H:%M:%S.%f").strftime("%d.%m.%Y %H:%M:%S")}'
                 for cp in currency_prices
             ]
             result_string = '```\n' + '\n'.join(currency_prices) + '```'
@@ -267,7 +267,7 @@ class BotController:
 
     async def _is_funds_to_buy_new_currency(self) -> bool:
         number_available_currencies = math.floor(self.config.total_available_amount / self.config.transactions_amount)
-        bought_currencies = self.db_client.find_currency_price_symbols()
+        bought_currencies = self.db_client.find_currency_price_cmc_ids()
 
         return len(bought_currencies) < number_available_currencies
 
@@ -279,8 +279,8 @@ class BotController:
             date_time=date_time,
         )
 
-    async def _create_income(self, symbol: str, price: Decimal):
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+    async def _create_income(self, cmc_id: int, price: Decimal):
+        currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
         first_currency_price = currency_prices[0]
 
         first_price = first_currency_price.price
@@ -290,16 +290,18 @@ class BotController:
         last_date_time = datetime.now(self.timezone)
 
         self.db_client.create_income(
-            symbol=symbol,
+            cmc_id=cmc_id,
+            symbol=first_currency_price.symbol,
             value=income_value,
             date_time=last_date_time,
         )
 
         self.google_sheets_client.append_income(
-            first_date_time, last_date_time, symbol, float(income_value)
+            first_date_time, last_date_time, float(first_price), float(price),
+            first_currency_price.symbol, float(income_value)
         )
 
-    async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, symbol: str, price: Decimal):
+    async def _sell_currency(self, context: ContextTypes.DEFAULT_TYPE, cmc_id: int, symbol: str, price: Decimal):
         try:
             # TODO add convert to self.config.currency_conversion request
 
@@ -308,17 +310,17 @@ class BotController:
             # await context.bot.send_photo(self.chat_id, chart_file)
 
             # Add new income data
-            await self._create_income(symbol, price)
+            await self._create_income(cmc_id, price)
 
             # Delete existing currecny prices
-            self.db_client.delete_currency_prices(symbol)
+            self.db_client.delete_currency_prices(cmc_id)
         except (DataForChartNotFound, GoogleSheetAppendIncomeFailed) as ex:
             self.sentry_client.capture_exception(ex)
         except BaseException as ex:
             self.sentry_client.capture_exception(ex)
 
-    async def _is_ready_to_sell(self, symbol: str, price: Decimal) -> bool:
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+    async def _is_ready_to_sell(self, cmc_id: int, price: Decimal) -> bool:
+        currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
 
         currency_price = currency_prices[0]
         old_price = currency_price.price
@@ -337,8 +339,8 @@ class BotController:
 
         return False
 
-    async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, symbol: str):
-        currency_prices = self.db_client.find_currency_price_by_symbol(symbol)
+    async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, cmc_id: int):
+        currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
         if len(currency_prices) == 0:
             return True
 
@@ -347,54 +349,55 @@ class BotController:
         currency_data = self.cmc_client.get_quotes_latest(first.cmc_id)
         latest_price = Decimal(str(currency_data['data'][str(first.cmc_id)]['quote']['USD']['price']))
         self._create_currency_price(
-            cmc_id=first.cmc_id, symbol=symbol, price=latest_price,
+            cmc_id=first.cmc_id, symbol=first.symbol, price=latest_price,
             date_time=datetime.now(self.timezone),
         )
 
-        await self._sell_currency(context, symbol, latest_price)
+        await self._sell_currency(context, first.cmc_id, first.symbol, latest_price)
 
-    async def _add_data(self, currencies: List[dict], bought_currencies: Set[str]) -> None:
+    async def _add_data(self, currencies: List[dict], bought_currencies: Set[int]) -> None:
         for currency in currencies:
             cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            if symbol in bought_currencies:
+            if cmc_id in bought_currencies:
                 self._create_currency_price(
                     cmc_id=cmc_id, symbol=symbol, price=price,
                     date_time=datetime.now(self.timezone),
                 )
 
     async def _sell_with_profit(
-        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[str]
+        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[int]
     ) -> None:
         for currency in currencies:
+            cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            if symbol in bought_currencies and await self._is_ready_to_sell(symbol, price):
-                await self._sell_currency(context, symbol, price)
+            if cmc_id in bought_currencies and await self._is_ready_to_sell(cmc_id, price):
+                await self._sell_currency(context, cmc_id, symbol, price)
 
     async def _sell_without_profit(
-        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[str]
+        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[int]
     ) -> None:
         # update out of trends
         for currency in currencies:
-            symbol = currency['symbol']
+            cmc_id = currency['id']
 
-            if symbol in bought_currencies:
-                bought_currencies.remove(symbol)
+            if cmc_id in bought_currencies:
+                bought_currencies.remove(cmc_id)
 
-            if symbol in self.out_of_trend_currencies:
-                self.out_of_trend_currencies.remove(symbol)
+            if cmc_id in self.out_of_trend_currencies:
+                self.out_of_trend_currencies.remove(cmc_id)
 
         self.out_of_trend_currencies.update(bought_currencies)
 
         # sell
         sold_currencies = set()
-        for symbol in self.out_of_trend_currencies:
-            await self._sell_currency_without_profit(context, symbol)
-            sold_currencies.add(symbol)
+        for cmc_id in self.out_of_trend_currencies:
+            await self._sell_currency_without_profit(context, cmc_id)
+            sold_currencies.add(cmc_id)
 
         self.out_of_trend_currencies.difference_update(sold_currencies)
 
@@ -419,7 +422,7 @@ class BotController:
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
 
-            bought_currencies = set(self.db_client.find_currency_price_symbols())
+            bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
 
             await self._add_data(currencies, bought_currencies)
 
