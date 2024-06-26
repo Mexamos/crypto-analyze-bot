@@ -37,6 +37,8 @@ class BotController:
         self.bot_token = token
         self.chat_id = int(chat_id)
 
+        self.known_currencies = set()
+
         self.out_of_trend_currencies = set()
 
         self.timezone = timezone(self.config.timezone_name)
@@ -134,7 +136,7 @@ class BotController:
         currencies = []
         income_amount = 0
         for income in incomes:
-            currencies.append(income[0])
+            currencies.append(str(income[0]))
             income_amount += income[1]
 
         currencies_string = ', '.join(currencies)
@@ -402,12 +404,16 @@ class BotController:
         self.out_of_trend_currencies.difference_update(sold_currencies)
 
     async def _buy(self, currencies: List[dict]) -> None:
+        new_currencies = set()
         for currency in currencies:
             cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
+            new_currencies.add(cmc_id)
+
             if (
+                cmc_id not in self.known_currencies and
                 await self._is_funds_to_buy_new_currency() and
                 not self.stop_buying_flag
             ):
@@ -416,11 +422,17 @@ class BotController:
                     date_time=datetime.now(self.timezone),
                 )
 
+        self.known_currencies = new_currencies
+
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
             currencies = self.cmc_client.get_latest_trending_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
+
+            if len(self.known_currencies) == 0:
+                self.known_currencies = set([currency['id'] for currency in currencies])
+                return
 
             bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
 
