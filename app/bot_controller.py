@@ -410,17 +410,18 @@ class BotController:
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            new_currencies.add(cmc_id)
-
-            if (
-                cmc_id not in self.known_currencies and
-                await self._is_funds_to_buy_new_currency() and
-                not self.stop_buying_flag
-            ):
-                self._create_currency_price(
-                    cmc_id=cmc_id, symbol=symbol, price=price,
-                    date_time=datetime.now(self.timezone),
-                )
+            if cmc_id not in self.known_currencies:
+                if (
+                    await self._is_funds_to_buy_new_currency() and
+                    not self.stop_buying_flag
+                ):
+                    self._create_currency_price(
+                        cmc_id=cmc_id, symbol=symbol, price=price,
+                        date_time=datetime.now(self.timezone),
+                    )
+                    new_currencies.add(cmc_id)
+            else:
+                new_currencies.add(cmc_id)
 
         self.known_currencies = new_currencies
 
