@@ -49,6 +49,13 @@ class Config:
             'trading_volume', 'total_available_amount', fallback='100'
         ))
 
+        self.quotes_historical_count = self.config.getint(
+            'historical_data', 'quotes_historical_count', fallback=10
+        )
+        self.quotes_historical_interval = self.config.get(
+            'historical_data', 'quotes_historical_interval', fallback='6h'
+        )
+
         self.timezone_name = self.config.get(
             'common', 'timezone_name', fallback='UTC'
         )

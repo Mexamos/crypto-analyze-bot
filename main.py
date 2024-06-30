@@ -26,14 +26,11 @@ SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
-# TODO продавать не по символу а по cmc_id
+# TODO urls
+# /v2/cryptocurrency/quotes/historical
+# /v1/cryptocurrency/listings/historical
 
 # TODO порешать ошибки из сентри
-
-# TODO Если не сработает стратегия в течении недели,
-# то попробовать - /v1/cryptocurrency/trending/gainers-losers
-
-# TODO подумать на счет валют которые долго висят на балансе и не продаются
 
 # TODO написать Readme.md
 
@@ -59,7 +56,7 @@ def main():
         sentry_client, config, TOKEN, BOT_CHAT_ID
     )
     telegram_controller.init_bot()
-    telegram_controller.restore_unsold_currencies()
+    # telegram_controller.restore_unsold_currencies()
     telegram_controller.run_bot()
 
 

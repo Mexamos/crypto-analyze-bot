@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import List, Set
 
+import pandas as pd
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -273,6 +274,70 @@ class BotController:
 
         return len(bought_currencies) < number_available_currencies
 
+    async def _is_there_buy_signal(self, cmc_id: int, last_updated, last_price):
+        data = self.cmc_client.get_quotes_historical(cmc_id)
+        dates = [quote['timestamp'] for quote in data['data']['quotes']] + [last_updated]
+        prices = [quote['quote']['USD']['price'] for quote in data['data']['quotes']] + [last_price]
+        data_frame_input = {
+            'Date': dates,
+            'Price': prices
+        }
+
+        df = pd.DataFrame(data_frame_input)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+
+        # Вычисление скользящей средней
+        window = self.config.quotes_historical_count
+        df['SMA'] = df['Price'].rolling(window=window).mean()
+
+        # Вычисление моментума
+        df['Momentum'] = df['Price'] - df['Price'].shift(window)
+
+        # Вычисление ROC
+        df['ROC'] = ((df['Price'] - df['Price'].shift(window)) / df['Price'].shift(window)) * 100
+
+        if (
+            prices[-1] > df['SMA'].iloc[-1] and
+            df['Momentum'].iloc[-1] > 0 and
+            df['ROC'].iloc[-1] > 0
+        ):
+            return True
+        else:
+            return False
+
+    async def _is_there_sell_signal(self, cmc_id: int, last_updated, last_price):
+        data = self.cmc_client.get_quotes_historical(cmc_id)
+        dates = [quote['timestamp'] for quote in data['data']['quotes']] + [last_updated]
+        prices = [quote['quote']['USD']['price'] for quote in data['data']['quotes']] + [last_price]
+        data_frame_input = {
+            'Date': dates,
+            'Price': prices
+        }
+
+        df = pd.DataFrame(data_frame_input)
+        df['Date'] = pd.to_datetime(df['Date'])
+        df.set_index('Date', inplace=True)
+
+        # Вычисление скользящей средней
+        window = self.config.quotes_historical_count
+        df['SMA'] = df['Price'].rolling(window=window).mean()
+
+        # Вычисление моментума
+        df['Momentum'] = df['Price'] - df['Price'].shift(window)
+
+        # Вычисление ROC
+        df['ROC'] = ((df['Price'] - df['Price'].shift(window)) / df['Price'].shift(window)) * 100
+
+        if (
+            prices[-1] < df['SMA'].iloc[-1] and
+            df['Momentum'].iloc[-1] < 0 and
+            df['ROC'].iloc[-1] < 0
+        ):
+            return True
+        else:
+            return False
+
     def _create_currency_price(self, cmc_id: int, symbol: str, price, date_time: datetime):
         self.db_client.create_currency_price(
             cmc_id=cmc_id,
@@ -321,26 +386,6 @@ class BotController:
         except BaseException as ex:
             self.sentry_client.capture_exception(ex)
 
-    async def _is_ready_to_sell(self, cmc_id: int, price: Decimal) -> bool:
-        currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
-
-        currency_price = currency_prices[0]
-        old_price = currency_price.price
-
-        difference = price - old_price
-
-        absolute_difference = abs(old_price - price)
-        sum_of_values = (old_price + price) / 2
-        difference_in_percentage = (absolute_difference / sum_of_values) * 100
-
-        if difference >= 0 and (
-            difference * self.config.transactions_amount >= self.config.value_difference_for_sale
-            or difference_in_percentage >= self.config.percentage_difference_for_sale
-        ):
-            return True
-
-        return False
-
     async def _sell_currency_without_profit(self, context: ContextTypes.DEFAULT_TYPE, cmc_id: int):
         currency_prices = self.db_client.find_currency_price_by_cmc_id(cmc_id)
         if len(currency_prices) == 0:
@@ -369,15 +414,20 @@ class BotController:
                     date_time=datetime.now(self.timezone),
                 )
 
-    async def _sell_with_profit(
-        self, context: ContextTypes.DEFAULT_TYPE, currencies: List[dict], bought_currencies: Set[int]
+    async def _sell(
+        self, context: ContextTypes.DEFAULT_TYPE, bought_currencies: Set[int]
     ) -> None:
-        for currency in currencies:
-            cmc_id = currency['id']
+        for cmc_id in bought_currencies:
+            currency = self.cmc_client.get_quotes_latest(cmc_id)
+
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            if cmc_id in bought_currencies and await self._is_ready_to_sell(cmc_id, price):
+            if (
+                await self._is_there_sell_signal(
+                    cmc_id, currency['last_updated'], currency['quote']['USD']['price']
+                )
+            ):
                 await self._sell_currency(context, cmc_id, symbol, price)
 
     async def _sell_without_profit(
@@ -404,44 +454,34 @@ class BotController:
         self.out_of_trend_currencies.difference_update(sold_currencies)
 
     async def _buy(self, currencies: List[dict]) -> None:
-        new_currencies = set()
         for currency in currencies:
             cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
-            if cmc_id not in self.known_currencies:
-                if (
-                    await self._is_funds_to_buy_new_currency() and
-                    not self.stop_buying_flag
-                ):
-                    self._create_currency_price(
-                        cmc_id=cmc_id, symbol=symbol, price=price,
-                        date_time=datetime.now(self.timezone),
-                    )
-                    new_currencies.add(cmc_id)
-            else:
-                new_currencies.add(cmc_id)
-
-        self.known_currencies = new_currencies
+            if (
+                await self._is_funds_to_buy_new_currency() and
+                await self._is_there_buy_signal(
+                    cmc_id, currency['last_updated'], currency['quote']['USD']['price']
+                ) and
+                not self.stop_buying_flag
+            ):
+                self._create_currency_price(
+                    cmc_id=cmc_id, symbol=symbol, price=price,
+                    date_time=datetime.now(self.timezone),
+                )
 
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
-            currencies = self.cmc_client.get_latest_trending_currencies()
+            currencies = self.cmc_client.get_trending_currencies()
             currencies = await self._filter_currencies_by_binance(currencies)
             currencies = await self._filter_conversion_currency(currencies)
 
-            if len(self.known_currencies) == 0:
-                self.known_currencies = set([currency['id'] for currency in currencies])
-                return
-
             bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
-
             await self._add_data(currencies, bought_currencies)
 
-            await self._sell_with_profit(context, currencies, bought_currencies)
-
-            await self._sell_without_profit(context, currencies, bought_currencies.copy())
+            bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
+            await self._sell(context, bought_currencies)
 
             await self._buy(currencies)
 

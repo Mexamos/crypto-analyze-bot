@@ -81,7 +81,7 @@ class CoinmarketcapClient:
     def _sort_data(self, currency):
         return currency['quote']['USD']['percent_change_24h']
 
-    def get_latest_trending_currencies(self) -> List[dict]:
+    def get_trending_currencies(self) -> List[dict]:
         data = self._trending_gainers_losers()
 
         filtered_data = filter(self._filter_data, data['data'])
@@ -93,5 +93,14 @@ class CoinmarketcapClient:
         url = self.host + '/v2/cryptocurrency/quotes/latest'
         parameters = {
             'id': cmc_id
+        }
+        return self._call(url, parameters)
+
+    def get_quotes_historical(self, cmc_id: int):
+        url = self.host + '/v2/cryptocurrency/quotes/historical'
+        parameters = {
+            'id': cmc_id,
+            'count': self.config.quotes_historical_count,
+            'interval': self.config.quotes_historical_interval,
         }
         return self._call(url, parameters)
