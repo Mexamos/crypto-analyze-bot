@@ -58,3 +58,56 @@ def fake_bot_controller(
         fake_chart_controller, fake_google_sheets_client,
         fake_sentry_client, fake_config, 'bot_token', chat_id='100'
     )
+
+
+@pytest.fixture
+def fake_context():
+    return MagicMock()
+
+
+@pytest.fixture
+def mock_trending_gainers_losers(mocker):
+
+    def inner(return_value=None):
+        mocker.patch(
+            'app.crypto.coinmarketcap_client.CoinmarketcapClient._trending_gainers_losers',
+            return_value=return_value
+        )
+
+    return inner
+
+
+@pytest.fixture
+def mock_filter_currencies_by_binance(mocker):
+
+    def inner(return_value=None):
+        mocker.patch(
+            'app.bot_controller.BotController._filter_currencies_by_binance',
+            return_value=return_value
+        )
+
+    return inner
+
+
+@pytest.fixture
+def mock_get_quotes_historical(mocker):
+
+    def inner(return_value=None):
+        mocker.patch(
+            'app.crypto.coinmarketcap_client.CoinmarketcapClient.get_quotes_historical',
+            return_value=return_value
+        )
+
+    return inner
+
+
+@pytest.fixture
+def mock_get_quotes_latest(mocker):
+
+    def inner(return_value=None):
+        mocker.patch(
+            'app.crypto.coinmarketcap_client.CoinmarketcapClient.get_quotes_latest',
+            return_value=return_value
+        )
+
+    return inner

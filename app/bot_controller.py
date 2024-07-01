@@ -282,6 +282,7 @@ class BotController:
             'Date': dates,
             'Price': prices
         }
+        print('data_frame_input', data_frame_input)
 
         df = pd.DataFrame(data_frame_input)
         df['Date'] = pd.to_datetime(df['Date'])
@@ -297,10 +298,17 @@ class BotController:
         # Вычисление ROC
         df['ROC'] = ((df['Price'] - df['Price'].shift(window)) / df['Price'].shift(window)) * 100
 
+        print('prices[-1]', prices[-1])
+        print("df['SMA'].iloc[-1]", df['SMA'].iloc[-1])
+        print("df['Momentum'].iloc[-1]", df['Momentum'].iloc[-1])
+        print("df['ROC'].iloc[-1]", df['ROC'].iloc[-1])
+        print("prices[-1] > df['SMA'].iloc[-1]", prices[-1] > df['SMA'].iloc[-1])
+        print("df['Momentum'].iloc[-1] > 0", df['Momentum'].iloc[-1] > 1)
+        print("df['ROC'].iloc[-1] > 0", df['ROC'].iloc[-1] > 1)
         if (
             prices[-1] > df['SMA'].iloc[-1] and
-            df['Momentum'].iloc[-1] > 0 and
-            df['ROC'].iloc[-1] > 0
+            df['Momentum'].iloc[-1] > 1 and
+            df['ROC'].iloc[-1] > 1
         ):
             return True
         else:
@@ -314,6 +322,7 @@ class BotController:
             'Date': dates,
             'Price': prices
         }
+        print('data_frame_input', data_frame_input)
 
         df = pd.DataFrame(data_frame_input)
         df['Date'] = pd.to_datetime(df['Date'])
@@ -329,10 +338,17 @@ class BotController:
         # Вычисление ROC
         df['ROC'] = ((df['Price'] - df['Price'].shift(window)) / df['Price'].shift(window)) * 100
 
+        print('prices[-1]', prices[-1])
+        print("df['SMA'].iloc[-1]", df['SMA'].iloc[-1])
+        print("df['Momentum'].iloc[-1]", df['Momentum'].iloc[-1])
+        print("df['ROC'].iloc[-1]", df['ROC'].iloc[-1])
+        print("prices[-1] > df['SMA'].iloc[-1]", prices[-1] < df['SMA'].iloc[-1])
+        print("df['Momentum'].iloc[-1] > 0", df['Momentum'].iloc[-1] < -1)
+        print("df['ROC'].iloc[-1] > 0", df['ROC'].iloc[-1] < -1)
         if (
             prices[-1] < df['SMA'].iloc[-1] and
-            df['Momentum'].iloc[-1] < 0 and
-            df['ROC'].iloc[-1] < 0
+            df['Momentum'].iloc[-1] < -1 and
+            df['ROC'].iloc[-1] < -1
         ):
             return True
         else:
@@ -420,12 +436,13 @@ class BotController:
         for cmc_id in bought_currencies:
             currency = self.cmc_client.get_quotes_latest(cmc_id)
 
-            symbol = currency['symbol']
-            price = Decimal(str(currency['quote']['USD']['price']))
+            symbol = currency['data'][str(cmc_id)]['symbol']
+            price = Decimal(str(currency['data'][str(cmc_id)]['quote']['USD']['price']))
 
             if (
                 await self._is_there_sell_signal(
-                    cmc_id, currency['last_updated'], currency['quote']['USD']['price']
+                    cmc_id, currency['data'][str(cmc_id)]['last_updated'],
+                    currency['data'][str(cmc_id)]['quote']['USD']['price']
                 )
             ):
                 await self._sell_currency(context, cmc_id, symbol, price)
@@ -453,13 +470,14 @@ class BotController:
 
         self.out_of_trend_currencies.difference_update(sold_currencies)
 
-    async def _buy(self, currencies: List[dict]) -> None:
+    async def _buy(self, currencies: List[dict], bought_currencies: Set[int]) -> None:
         for currency in currencies:
             cmc_id = currency['id']
             symbol = currency['symbol']
             price = Decimal(str(currency['quote']['USD']['price']))
 
             if (
+                cmc_id not in bought_currencies and
                 await self._is_funds_to_buy_new_currency() and
                 await self._is_there_buy_signal(
                     cmc_id, currency['last_updated'], currency['quote']['USD']['price']
@@ -473,19 +491,28 @@ class BotController:
 
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
         try:
+            print('process_trending_currencies 1')
             currencies = self.cmc_client.get_trending_currencies()
+            print('process_trending_currencies 2')
             currencies = await self._filter_currencies_by_binance(currencies)
+            print('process_trending_currencies 3')
             currencies = await self._filter_conversion_currency(currencies)
+            print('process_trending_currencies 4')
 
             bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
             await self._add_data(currencies, bought_currencies)
+            print('process_trending_currencies 5')
 
             bought_currencies = set(self.db_client.find_currency_price_cmc_ids())
             await self._sell(context, bought_currencies)
+            print('process_trending_currencies 6')
 
-            await self._buy(currencies)
+            await self._buy(currencies, bought_currencies)
+            print('process_trending_currencies 7')
 
         except CmcException as ex:
+            print('ex', ex)
             self.sentry_client.capture_exception(ex)
         except BaseException as ex:
+            print('ex', ex)
             self.sentry_client.capture_exception(ex)

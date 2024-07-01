@@ -16,6 +16,7 @@ jobs:
               run: |
                 ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'ENDSSH'
                 cd ${{ secrets.VPS_APP_PATH }}
+                docker system prune -af --volumes
                 git pull --rebase=interactive
                 echo '${{ secrets.GOOGLE_SHEETS_CREDENTIALS_VALUE }}' > ./${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}
 
