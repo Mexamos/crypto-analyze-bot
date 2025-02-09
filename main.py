@@ -62,68 +62,39 @@ def main():
     telegram_controller.run_bot()
 
 
-if __name__ == "__main__":
-    main()
+# if __name__ == "__main__":
+#     main()
 
 
-# import backtrader as bt
-# import pandas as pd
 
-# # Example historical data
-# data = {
-#     'Date': ['2023-06-01', '2023-06-02', '2023-06-03', '2023-06-04', '2023-06-05', '2023-06-06', '2023-06-07'],
-#     'Open': [100, 105, 103, 108, 110, 107, 109],
-#     'High': [105, 107, 106, 111, 113, 109, 112],
-#     'Low': [95, 102, 100, 106, 108, 105, 107],
-#     'Close': [102, 106, 104, 110, 111, 108, 110],
-#     'Volume': [1000, 1100, 1050, 1200, 1150, 1300, 1250]
-# }
 
-# df = pd.DataFrame(data)
-# df['Date'] = pd.to_datetime(df['Date'])
-# df.set_index('Date', inplace=True)
+from binance.client import Client
+import datetime
 
-# class MomentumStrategy(bt.Strategy):
-#     params = (('window', 5), ('stop_loss_pct', 0.05), ('take_profit_pct', 0.10))
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
 
-#     def __init__(self):
-#         self.sma = bt.indicators.SimpleMovingAverage(self.data.close, period=self.params.window)
-#         self.momentum = self.data.close - self.data.close(-self.params.window)
-#         self.roc = (self.data.close - self.data.close(-self.params.window)) / self.data.close(-self.params.window) * 100
-#         self.buy_price = None
+binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
-#     def next(self):
-#         if self.position:
-#             current_price = self.data.close[0]
-#             if current_price <= self.buy_price * (1 - self.params.stop_loss_pct):
-#                 self.sell()
-#                 self.buy_price = None
-#             elif current_price >= self.buy_price * (1 + self.params.take_profit_pct):
-#                 self.sell()
-#                 self.buy_price = None
-#         else:
-#             if self.data.close[0] > self.sma[0] and self.momentum[0] > 1 and self.roc[0] > 1:
-#                 self.buy()
-#                 self.buy_price = self.data.close[0]
-#             elif self.data.close[0] < self.sma[0] and self.momentum[0] < -1 and self.roc[0] < -1:
-#                 self.sell()
 
-# # Initialize Cerebro engine
-# cerebro = bt.Cerebro()
+def place_market_order():
 
-# # Add strategy to Cerebro
-# cerebro.addstrategy(MomentumStrategy)
+    AMOUNT_USDT = 10  # Amount of USDT to spend (start with small amounts!)
 
-# # Load data into backtrader
-# data = bt.feeds.PandasData(dataname=df)
-# cerebro.adddata(data)
+    # Check balance first
+    balance = binance_cleint.get_account_balance('SOL')
+    print('balance', balance)
+    
+    if not balance or balance < AMOUNT_USDT:
+        print(f"Insufficient USDT balance. Available: {balance} USDT")
+        return
 
-# # Set initial capital and run backtest
-# cerebro.broker.setcash(10000)
-# print(f"Starting Portfolio Value: {cerebro.broker.getvalue()}")
-# cerebro.run()
-# print(f"Final Portfolio Value: {cerebro.broker.getvalue()}")
+    # binance_cleint.make_order('SOLUSDT', AMOUNT_USDT)
 
-# # Plot the results
-# cerebro.plot()
+    # binance_cleint.make_convertation(
+    #     from_asset='USDT', to_asset='TON', from_amount=10
+    # )
 
+
+# place_market_order()
