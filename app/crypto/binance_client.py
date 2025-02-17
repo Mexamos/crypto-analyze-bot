@@ -82,7 +82,7 @@ class BinanceClient:
         signature = hashing_object.hexdigest()
         return signature
 
-    def get_account_balance(self, asset):
+    def get_account_balance(self, asset: str):
         timestamp = int(time() * 1000)
         query_string = f'timestamp={timestamp}'
         signature = self._generate_signature(query_string)
@@ -93,13 +93,31 @@ class BinanceClient:
         balances = response['balances']
         return next((float(b['free']) for b in balances if b['asset'] == asset), 0.0)
 
-    def make_order(self, symbol: str, amount: int):
+    def get_account_trade_list(self, asset: str):
+        timestamp = int(time() * 1000)
+        query_string = f'timestamp={timestamp}&symbol={asset}'
+        signature = self._generate_signature(query_string)
+
+        url = f'{self.host}/api/v3/myTrades?{query_string}&signature={signature}'
+        response = self._call(url, {})
+        return response
+
+    def get_all_orders(self, asset: str):
+        timestamp = int(time() * 1000)
+        query_string = f'timestamp={timestamp}&symbol={asset}'
+        signature = self._generate_signature(query_string)
+
+        url = f'{self.host}/api/v3/allOrders?{query_string}&signature={signature}'
+        response = self._call(url, {})
+        return response
+
+    def make_order(self, symbol: str, side: str, order_type: str, quantity: float):
         timestamp = int(time() * 1000)
         params = {
             'symbol': symbol,
-            'side': 'BUY',
-            'type': 'MARKET',
-            'quoteOrderQty': amount,
+            'side': side,
+            'type': order_type,
+            'quoteOrderQty': quantity,
             'timestamp': timestamp
         }
         
@@ -108,12 +126,7 @@ class BinanceClient:
         
         url = f'{self.host}/api/v3/order?{query_string}&signature={signature}'
 
-        response = self._call(url, {}, method='POST')
-
-        print("Order executed successfully!", response)
-        print(f"Order ID: {response['orderId']}")
-        print(f"Executed Qty: {response['executedQty']}")
-        print(f"Spent: {response['cummulativeQuoteQty']}")
+        return self._call(url, {}, method='POST')
 
     def make_convertation(self, from_asset: str, to_asset: str, from_amount: str):
         timestamp = int(time() * 1000)

@@ -1,4 +1,4 @@
-FROM python:3.11-slim as lib
+FROM python:3.11-slim
 
 COPY . /src
 WORKDIR /src

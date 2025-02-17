@@ -1,14 +1,11 @@
 import os
 
 from dotenv import load_dotenv
+from redis import Redis
 
 from app.bot_controller import BotController
-from app.database.client import DatabaseClient
-from app.crypto.coinmarketcap_client import CoinmarketcapClient
 from app.crypto.binance_client import BinanceClient
-from app.analytics.chart import ChartController
 from app.config import Config
-from app.analytics.google_sheets_client import GoogleSheetsClient
 from app.monitoring.sentry import SentryClient
 
 load_dotenv()
@@ -26,13 +23,11 @@ SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
+# TODO Записать все хочты и порты в конфиг и брать оттуда
+
 # TODO Add for requests raises exceptions !!!!!!!!!!
 
-# TODO urls
-# /v2/cryptocurrency/quotes/historical
-# /v1/cryptocurrency/listings/historical
-
-# TODO порешать ошибки из сентри
+# TODO добавить сентри
 
 # TODO написать Readme.md
 
@@ -42,59 +37,18 @@ SENTRY_DSN = os.getenv('SENTRY_DSN')
 
 def main():
     config = Config()
-    db_client = DatabaseClient()
 
-    chart_controller = ChartController(db_client, config)
-    google_sheets_client = GoogleSheetsClient(CREDENTIALS_FILE_PATH, SPREADSHEET_ID)
-
-    cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY, config)
     binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+    redis_client = Redis(host='redis', port=6379, db=0)
 
-    sentry_client = SentryClient(SENTRY_DSN, config)
+    # sentry_client = SentryClient(SENTRY_DSN, config)
 
-    telegram_controller = BotController(
-        db_client, cmc_client, binance_cleint,
-        chart_controller, google_sheets_client,
-        sentry_client, config, TOKEN, BOT_CHAT_ID
+    bot_controller = BotController(
+        config, binance_cleint, redis_client
     )
-    telegram_controller.init_bot()
-    # telegram_controller.restore_unsold_currencies()
-    telegram_controller.run_bot()
-
-
-# if __name__ == "__main__":
-#     main()
+    bot_controller.run_bot()
 
 
 
-
-from binance.client import Client
-import datetime
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-
-binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-
-
-def place_market_order():
-
-    AMOUNT_USDT = 10  # Amount of USDT to spend (start with small amounts!)
-
-    # Check balance first
-    balance = binance_cleint.get_account_balance('SOL')
-    print('balance', balance)
-    
-    if not balance or balance < AMOUNT_USDT:
-        print(f"Insufficient USDT balance. Available: {balance} USDT")
-        return
-
-    # binance_cleint.make_order('SOLUSDT', AMOUNT_USDT)
-
-    # binance_cleint.make_convertation(
-    #     from_asset='USDT', to_asset='TON', from_amount=10
-    # )
-
-
-# place_market_order()
+if __name__ == "__main__":
+    main()
