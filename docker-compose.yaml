@@ -10,35 +10,12 @@ services:
         depends_on:
             - redis
 
-    # agent:
-    #     image: grafana/agent:latest
-    #     container_name: grafana-agent
-    #     restart: always
-    #     ports:
-    #         - "9411:9411"
-    #     volumes:
-    #         - "./grafana/config.yaml:/etc/agent-config/agent.yaml:ro"
-    #         - "/:/host/root:ro"
-    #         - "/sys:/host/sys:ro"
-    #         - "/proc:/host/proc:ro"
-    #         - "/tmp/agent:/etc/agent"
-    #     entrypoint:
-    #         - /bin/grafana-agent
-    #         - -config.file=/etc/agent-config/agent.yaml
-    #         - -config.expand-env=true
-    #         - -metrics.wal-directory=/tmp/agent/wal
-    #     network_mode: "host"
-    #     pid: "host"
-    #     env_file:
-    #         - .env
-
     redis:
         image: redis/redis-stack:7.4.0-v1
         container_name: bot-redis
         ports:
             - "6379:6379"
             - "8001:8001"
-
 
     loki:
         image: grafana/loki:3.4
@@ -60,12 +37,11 @@ services:
         image: grafana/grafana:11.5.0
         container_name: bot-grafana
         ports:
-            - 3000:3000
+            - 80:3000
         volumes:
             - ./grafana/provisioning-datasources:/etc/grafana/provisioning/datasources
             - ./grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/main.yaml
             - ./grafana/provisioning-dashboards:/etc/grafana/provisioning/dashboards
         environment:
-            - GF_AUTH_ANONYMOUS_ENABLED=true
-            - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-            - GF_AUTH_DISABLE_LOGIN_FORM=true
+            - GF_SECURITY_ADMIN_USER=${GF_SECURITY_ADMIN_USER:admin}
+            - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:admin}

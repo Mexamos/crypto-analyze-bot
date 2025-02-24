@@ -14,9 +14,6 @@ from app.crypto.binance_client import BinanceClient
 
 load_dotenv()
 
-TOKEN = os.getenv('BOT_TOKEN')
-BOT_CHAT_ID = os.getenv('BOT_CHAT_ID')
-
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 

@@ -16,13 +16,14 @@ jobs:
               run: |
                 ssh -i ~/.ssh/id_ed25519 ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} <<'ENDSSH'
                 cd ${{ secrets.VPS_APP_PATH }}
+                docker-compose down
                 docker system prune -af --volumes
-                git pull --rebase=interactive
 
+                git pull --rebase=interactive
+                export GF_SECURITY_ADMIN_USER=${{ secrets.BINANCE_API_KEY }}
+                export GF_SECURITY_ADMIN_PASSWORD=${{ secrets.BINANCE_API_KEY }}
                 echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}" >> .env
                 echo "BINANCE_SECRET_KEY=${{ secrets.BINANCE_SECRET_KEY }}" >> .env
                 echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
-
-                docker-compose down
                 docker-compose up --build --force-recreate -d
                 ENDSSH
