@@ -15,7 +15,7 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
-# TODO Записать все хочты и порты в конфиг и брать оттуда
+# TODO Записать все хосты и порты в конфиг и брать оттуда
 
 # TODO Add for requests raises exceptions !!!!!!!!!!
 

@@ -1,20 +1,15 @@
 import json
-import math
-from decimal import Decimal
-from typing import List, Set
 from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
 from logging.handlers import RotatingFileHandler
 
 import pandas as pd
 import numpy as np
 from pandas import DataFrame
-from pytz import timezone
 from redis import Redis
 from websocket import WebSocketApp
 
 from app.crypto.binance_client import BinanceClient
 from app.config import Config
-from app.utils import scientific_notation_to_usual_format
 from app.monitoring.sentry import SentryClient
 
 
@@ -136,7 +131,6 @@ class BotController:
             # Ограничиваем список последних 100 свечей
             self.redis_client.ltrim("candles", -100, -1)
 
-            self.logger.info(f"Новая закрытая свеча: {open_time} - Цена закрытия: {close_price}")
             self.update_signals_and_trade()
 
     def calculate_indicators(self, df: DataFrame) -> DataFrame:
@@ -203,7 +197,7 @@ class BotController:
         ):
             # Получаем баланс USDT
             available_usdt = self.get_asset_balance(self.base_asset)
-            self.logger.info('available_usdt', available_usdt)
+            self.logger.info(f'Доступное количество USDT: {available_usdt}')
             if available_usdt < self.minimum_trade_amount:
                 self.logger.info(f'Недостаточно средств для покупки: {available_usdt} USDT. Минимум: {self.minimum_trade_amount}')
                 return
@@ -213,17 +207,17 @@ class BotController:
             quantity = round(quantity, 6)  # проверьте точность (stepSize) для SYMBOL
             self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем {quantity} {self.trade_asset}")
 
-            # order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quantity)
-            # self.logger.info("Ответ ордера на покупку:", order)
-            # if order and "status" in order and order["status"] == "FILLED":
-            #     self.position = "long"
+            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quantity)
+            self.logger.info(f"Ответ ордера на покупку: {order}")
+            if order and "status" in order and order["status"] == "FILLED":
+                self.position = "long"
 
-            #     # Сохраняем цену входа и рассчитываем уровень стоп-лосса по ATR
-            #     self.entry_price = latest["Close"]
-            #     if not pd.isna(latest["atr"]):
-            #         self.stop_loss = self.entry_price - self.atr_stop_multiplier * latest["atr"]
-            #     else:
-            #         self.stop_loss = None
+                # Сохраняем цену входа и рассчитываем уровень стоп-лосса по ATR
+                self.entry_price = latest["Close"]
+                if not pd.isna(latest["atr"]):
+                    self.stop_loss = self.entry_price - self.atr_stop_multiplier * latest["atr"]
+                else:
+                    self.stop_loss = None
 
         # Сигнал на продажу: если позиция открыта и цена закрытия ниже всех SMA, а объём выше средней величины объёма
         elif self.position == "long":
@@ -244,12 +238,12 @@ class BotController:
                 available_asset = round(available_asset, 6)
                 self.logger.info(f"Сигнал SELL: Цена {latest['Close']}, Продаём {available_asset} {self.base_asset}")
 
-                # order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", available_asset)
-                # self.logger.info("Ответ ордера на продажу: %s", order)
-                # if order and "status" in order and order["status"] == "FILLED":
-                #     self.position = None
-                #     self.entry_price = None
-                #     self.stop_loss = None
+                order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", available_asset)
+                self.logger.info(f"Ответ ордера на продажу: {order}")
+                if order and "status" in order and order["status"] == "FILLED":
+                    self.position = None
+                    self.entry_price = None
+                    self.stop_loss = None
 
     def get_asset_balance(self, asset: str) -> float:
         return self.binance_cleint.get_account_balance(asset)
