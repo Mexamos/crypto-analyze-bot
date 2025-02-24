@@ -18,18 +18,10 @@ jobs:
                 cd ${{ secrets.VPS_APP_PATH }}
                 docker system prune -af --volumes
                 git pull --rebase=interactive
-                echo '${{ secrets.GOOGLE_SHEETS_CREDENTIALS_VALUE }}' > ./${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}
 
-                echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
-                echo "BOT_CHAT_ID=${{ secrets.BOT_CHAT_ID }}" >> .env
-                echo "COIN_MARKET_CAP_API_KEY=${{ secrets.COIN_MARKET_CAP_API_KEY }}" >> .env
                 echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}" >> .env
                 echo "BINANCE_SECRET_KEY=${{ secrets.BINANCE_SECRET_KEY }}" >> .env
-                echo "CREDENTIALS_FILE_PATH=${{ secrets.GOOGLE_SHEETS_CREDENTIALS_FILE_NAME }}" >> .env
-                echo "SPREADSHEET_ID=${{ secrets.GOOGLE_SHEETS_SPREADSHEET_ID }}" >> .env
                 echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
-                echo "SCALEWAY_GRAFANA_METRICS_URL=${{ secrets.SCALEWAY_GRAFANA_METRICS_URL }}" >> .env
-                echo "SCALEWAY_GRAFANA_TOKEN=${{ secrets.SCALEWAY_GRAFANA_TOKEN }}" >> .env
 
                 docker-compose down
                 docker-compose up --build --force-recreate -d

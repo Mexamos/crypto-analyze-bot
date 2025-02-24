@@ -10,16 +10,8 @@ from app.monitoring.sentry import SentryClient
 
 load_dotenv()
 
-TOKEN = os.getenv('BOT_TOKEN')
-BOT_CHAT_ID = os.getenv('BOT_CHAT_ID')
-
-COIN_MARKET_CAP_API_KEY = os.getenv('COIN_MARKET_CAP_API_KEY')
-
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
-
-CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
