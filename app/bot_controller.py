@@ -1,12 +1,14 @@
 import json
 from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
 from logging.handlers import RotatingFileHandler
+from time import sleep
 
 import pandas as pd
 import numpy as np
 from pandas import DataFrame
 from redis import Redis
 from websocket import WebSocketApp
+from websocket._exceptions import WebSocketConnectionClosedException
 
 from app.crypto.binance_client import BinanceClient
 from app.config import Config
@@ -18,6 +20,9 @@ class BotController:
     def __init__(
         self, config: Config, binance_cleint: BinanceClient, redis_client: Redis
     ) -> None:
+        self.bot_is_running = True
+        self.restart_time = 30
+
         self.init_logs(config.logs_file_path)
 
         self.base_asset = config.base_asset
@@ -62,19 +67,24 @@ class BotController:
 
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
-        ws = WebSocketApp(
-            self.ws_endpoint,
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close
-        )
-        self.logger.info("Запуск потоковой торговли...")
+        while self.bot_is_running:
+            ws = WebSocketApp(
+                self.ws_endpoint,
+                on_open=self.on_open,
+                on_message=self.on_message,
+                on_error=self.on_error,
+                on_close=self.on_close,
+            )
+            self.logger.info("Запуск потоковой торговли...")
 
-        try:
-            ws.run_forever()
-        except KeyboardInterrupt:
-            self.logger.info("Прерывание работы через KeyboardInterrupt. Завершение работы.")
+            try:
+                ws.run_forever(ping_interval=30, ping_timeout=10)
+            except KeyboardInterrupt:
+                self.bot_is_running = False
+                self.logger.info("Прерывание работы через KeyboardInterrupt. Завершение работы.")
+            except WebSocketConnectionClosedException as e:
+                self.logger.error(f"Ошибка WebSocket: {e}. Попытка переподключения через {self.restart_time} секунд...")
+                sleep(self.restart_time)
 
     def on_message(self, ws, message):
         try:
