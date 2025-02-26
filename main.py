@@ -13,6 +13,8 @@ load_dotenv()
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
+
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
 # TODO Записать все хосты и порты в конфиг и брать оттуда
@@ -31,7 +33,7 @@ def main():
     config = Config()
 
     binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-    redis_client = Redis(host='redis', port=6379, db=0)
+    redis_client = Redis(host='redis', port=6379, db=0, password=REDIS_PASSWORD)
 
     # sentry_client = SentryClient(SENTRY_DSN, config)
 
