@@ -143,10 +143,16 @@ class BotController:
 
             self.update_signals_and_trade()
 
+    def parse_datetime(self, data):
+        if '.' in data:
+            return pd.to_datetime(data, format="%Y-%m-%dT%H:%M:%S.%f")
+        else:
+            return pd.to_datetime(data, format="%Y-%m-%dT%H:%M:%S")
+
     def calculate_indicators(self, df: DataFrame) -> DataFrame:
         # Преобразуем поля времени в datetime
-        df["Open Time"] = pd.to_datetime(df["Open Time"], format="%Y-%m-%dT%H:%M:%S.%f")
-        df["Close Time"] = pd.to_datetime(df["Close Time"], format="%Y-%m-%dT%H:%M:%S.%f")
+        df["Open Time"] = df["Open Time"].apply(self.parse_datetime)
+        df["Close Time"] = df["Close Time"].apply(self.parse_datetime)
 
         # Вычисление скользящих средних для цены закрытия
         df["sma_high"] = df["Close"].rolling(window=self.window_high).mean()
@@ -194,12 +200,11 @@ class BotController:
 
         # Берём самую последнюю свечу
         latest = df.iloc[-1]
-        self.logger.info(f'Новая цена: {latest["Close"]}')
 
         # --- Логика сигналов ---
         # Сигнал на покупку: если позиции нет и цена закрытия выше всех SMA, а объём выше средней величины объёма
         if (
-            self.position is None and
+            not self.position and
             latest["adx"] >= self.adx_threshold and
             latest["Close"] > latest["sma_high"] and
             latest["Close"] > latest["sma_medium"] and
