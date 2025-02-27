@@ -120,10 +120,10 @@ class BinanceClient:
             'quoteOrderQty': quantity,
             'timestamp': timestamp
         }
-        
+
         query_string = urllib.parse.urlencode(params)
         signature = self._generate_signature(query_string)
-        
+
         url = f'{self.host}/api/v3/order?{query_string}&signature={signature}'
 
         return self._call(url, {}, method='POST')

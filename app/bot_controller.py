@@ -218,10 +218,9 @@ class BotController:
                 self.logger.info(f'Недостаточно средств для покупки: {available_usdt} USDT. Минимум: {self.minimum_trade_amount}')
                 return
 
-            # Рассчитываем количество базового актива для покупки
-            quantity = available_usdt / latest["Close"]
-            quantity = round(quantity, 6)  # проверьте точность (stepSize) для SYMBOL
-            self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем {quantity} {self.trade_asset}")
+            # Используем доступные USDT как сумму для покупки (quoteOrderQty)
+            quantity = round(available_usdt, 2)  # округлите до нужной точности для USDT
+            self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем на сумму {quantity} {self.base_asset}")
 
             order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quantity)
             self.logger.info(f"Ответ ордера на покупку: {order}")
