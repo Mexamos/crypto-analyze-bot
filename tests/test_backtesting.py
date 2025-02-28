@@ -19,9 +19,9 @@ BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
 SYMBOL = 'SOLUSDT'
 INTERVAL = '1s'
-HISTORICAL_PERIOD_IN_DAYS = 30
+HISTORICAL_PERIOD_IN_DAYS = 1
 NUMBER_MISSING_SECONDS_BETWEEEN_SIGNALS = 1
-INITIAL_TRADE_AMOUNT = 100
+INITIAL_TRADE_AMOUNT = 300
 
 PROCESS_NUMBER_TO_LOAD_DATA = 5
 CSV_FILE = f'{SYMBOL.lower()}_{INTERVAL}_binance_klines.csv'
@@ -53,17 +53,17 @@ DATA_HEADERS = ['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close Ti
 # 27, 31, 5, 83 - 114
 
 # SOL
-WINDOW_HIGH = 40
-WINDOW_MEDIUM = 20
-WINDOW_LOW = 7
-WINDOW_VOLUME = 45
+WINDOW_HIGH = 30
+WINDOW_MEDIUM = 5
+WINDOW_LOW = 5
+WINDOW_VOLUME = 30
 
 # Минимальное значение ADX для входа в сделку
 ADX_THRESHOLD = 20
 # Период для расчёта ATR
 ATR_PERIOD = 14
 # Множитель для стоп-лосса
-ATR_STOP_MULTIPLIER = 2.0
+ATR_STOP_MULTIPLIER = 1.5
 
 # 48, 24, 15, 25 - 53
 # 35, 20, 7, 57 - 66
@@ -166,7 +166,7 @@ def merge_csv_files(file_list, merged_file):
 def load_and_save_data_to_file():
     remove_file(CSV_FILE)
 
-    end_date = datetime(2024, 9, 23)
+    end_date = datetime.now()
     start_date = end_date - timedelta(days=HISTORICAL_PERIOD_IN_DAYS)
     segment_duration = (end_date - start_date) / PROCESS_NUMBER_TO_LOAD_DATA
 
