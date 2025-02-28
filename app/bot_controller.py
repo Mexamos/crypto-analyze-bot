@@ -224,10 +224,9 @@ class BotController:
                 return
 
             # Используем доступные USDT как сумму для покупки (quoteOrderQty)
-            quantity = round(available_usdt, 2)  # округлите до нужной точности для USDT
-            self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем на сумму {quantity} {self.base_asset}")
+            self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем на сумму {available_usdt} {self.base_asset}")
 
-            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quantity)
+            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", available_usdt)
             self.logger.info(f"Ответ ордера на покупку: {order}")
             if order and "status" in order and order["status"] == "FILLED":
                 self.position = "long"
