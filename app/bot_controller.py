@@ -44,6 +44,7 @@ class BotController:
         self.atr_period = config.atr_period
         self.atr_stop_multiplier = config.atr_stop_multiplier
         self.stop_loss = None
+        self.quantity_precession = 0
 
     def init_logs(self, logs_file_path: str):
         self.logger = getLogger('bot')
@@ -73,6 +74,7 @@ class BotController:
         for filter in symbol_data['filters']:
             if filter['filterType'] == 'LOT_SIZE':
                 self.step_size = float(filter['stepSize'])
+                self.quantity_precession = len(str(filter['stepSize']).split('.')[1])
 
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
@@ -197,9 +199,12 @@ class BotController:
 
         return df
 
-    def round_step_size(self, quantity):
-        # Rounds down to the nearest valid multiple of step_size
-        return math.floor(quantity / self.step_size) * self.step_size
+    def round_step_size_with_precision(self, quantity, decimals):
+        # First, round down to the nearest valid multiple of step_size
+        valid_quantity = math.floor(quantity / self.step_size) * self.step_size
+        # Then, round down the result to the desired precision
+        factor = 10 ** decimals
+        return math.floor(valid_quantity * factor) / factor
 
     def update_signals_and_trade(self):
         """
@@ -267,7 +272,7 @@ class BotController:
 
             if sell:
                 available_asset = self.get_asset_balance(self.trade_asset)
-                quantity = self.round_step_size(available_asset)
+                quantity = self.round_step_size_with_precision(available_asset, self.quantity_precession)
                 self.logger.info(f"Сигнал SELL: Цена {latest['Close']}, Продаём {quantity} {self.trade_asset}")
 
                 order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", quantity=quantity)
