@@ -76,31 +76,36 @@ class BotController:
                 on_close=self.on_close,
             )
             self.logger.info("Запуск потоковой торговли...")
-
-            try:
-                ws.run_forever(ping_interval=30, ping_timeout=10)
-            except KeyboardInterrupt:
-                self.bot_is_running = False
-                self.logger.info("Прерывание работы через KeyboardInterrupt. Завершение работы.")
-            except WebSocketConnectionClosedException as e:
-                self.logger.error(f"Ошибка WebSocket: {e}. Попытка переподключения через {self.restart_time} секунд...")
-                sleep(self.restart_time)
+            ws.run_forever(ping_interval=20, ping_timeout=10)
 
     def on_message(self, ws, message):
         try:
             msg = json.loads(message)
             self.process_message(msg)
-        except BaseException as e:
-            self.logger.exception(f'Ошибка обработки сообщения: {e}')
+        except WebSocketConnectionClosedException as exc:
+            ws.close_exc = exc
+            ws.close()
+        except BaseException as exc:
+            exc_data = exc
+            if hasattr(exc, 'response') and hasattr(exc.response, 'json'):
+                exc_data = exc.response.json()
+
+            self.logger.exception(f'Ошибка обработки сообщения: {exc_data}')
             ws.close()
 
     def on_error(self, ws, error):
-        if type(error) not in (KeyboardInterrupt,):
+        if type(error) not in (KeyboardInterrupt, WebSocketConnectionClosedException):
             self.logger.exception(f"WebSocket error: {error}")
-            ws.close()
 
     def on_close(self, ws, close_status_code, close_msg):
         self.logger.info("WebSocket закрыт")
+
+        close_exc = getattr(ws, 'close_exc', None)
+        if not isinstance(close_exc, WebSocketConnectionClosedException):
+            self.bot_is_running = False
+        else:
+            self.logger.error(f"Ошибка WebSocket: {close_exc}. Попытка переподключения через {self.restart_time} секунд...")
+            sleep(self.restart_time)
 
     def on_open(self, ws):
         self.logger.info("WebSocket соединение установлено")
