@@ -41,6 +41,7 @@ def main():
     bot_controller = BotController(
         config, binance_cleint, redis_client
     )
+    bot_controller.request_static_data()
     bot_controller.run_bot()
 
 

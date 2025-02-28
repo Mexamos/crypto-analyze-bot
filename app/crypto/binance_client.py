@@ -6,16 +6,6 @@ import urllib.parse
 
 import requests
 
-# https://binance-docs.github.io/apidocs/spot/en/#convert-endpoints
-
-# Для аналитики использовать один из этих двух
-# GET /sapi/v1/convert/exchangeInfo
-# POST /sapi/v1/convert/getQuote
-
-# GET /sapi/v1/convert/orderStatus
-# Order status (USER_DATA)
-# Check order status
-
 
 class BinanceClient:
 
@@ -34,15 +24,13 @@ class BinanceClient:
         # print('response.headers', response.headers)
         return response.json()
 
-    def find_exchange_info(self, toAsset: str, fromAsset: str):
-        url = self.host + '/sapi/v1/convert/exchangeInfo'
+    def exchange_info(self, symbol: str):
+        url = self.host + '/api/v3/exchangeInfo'
         params = {
-            'fromAsset': fromAsset,
-            'toAsset': toAsset,
+            'symbol': symbol
         }
-
         return self._call(url, params)
-    
+
     def kline_data(
         self,
         symbol: str,
@@ -111,15 +99,21 @@ class BinanceClient:
         response = self._call(url, {})
         return response
 
-    def make_order(self, symbol: str, side: str, order_type: str, quantity: float):
+    def make_order(
+        self, symbol: str, side: str, order_type: str,
+        quoteOrderQty: Optional[float] = None, quantity: Optional[float] = None
+    ):
         timestamp = int(time() * 1000)
         params = {
             'symbol': symbol,
             'side': side,
             'type': order_type,
-            'quoteOrderQty': quantity,
             'timestamp': timestamp
         }
+        if quoteOrderQty:
+            params['quoteOrderQty'] = quoteOrderQty
+        else:
+            params['quantity'] = quantity
 
         query_string = urllib.parse.urlencode(params)
         signature = self._generate_signature(query_string)

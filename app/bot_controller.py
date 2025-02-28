@@ -1,4 +1,5 @@
 import json
+import math
 from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
 from logging.handlers import RotatingFileHandler
 from time import sleep
@@ -42,6 +43,7 @@ class BotController:
         self.adx_threshold = config.adx_threshold
         self.atr_period = config.atr_period
         self.atr_stop_multiplier = config.atr_stop_multiplier
+        self.stop_loss = None
 
     def init_logs(self, logs_file_path: str):
         self.logger = getLogger('bot')
@@ -64,6 +66,13 @@ class BotController:
         self.logger.addHandler(rotating_file_handler)
         self.logger.addHandler(stream_handler)
         self.logger.addHandler(file_handler)
+
+    def request_static_data(self):
+        response = self.binance_cleint.exchange_info(self.symbol)
+        symbol_data = response['symbols'][0]
+        for filter in symbol_data['filters']:
+            if filter['filterType'] == 'LOT_SIZE':
+                self.step_size = float(filter['stepSize'])
 
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
@@ -188,6 +197,10 @@ class BotController:
 
         return df
 
+    def round_step_size(self, quantity):
+        # Rounds down to the nearest valid multiple of step_size
+        return math.floor(quantity / self.step_size) * self.step_size
+
     def update_signals_and_trade(self):
         """
         Рассчитывает скользящие средние и, если условия выполнены, отправляет ордера.
@@ -226,7 +239,7 @@ class BotController:
             # Используем доступные USDT как сумму для покупки (quoteOrderQty)
             self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем на сумму {available_usdt} {self.base_asset}")
 
-            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", available_usdt)
+            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quoteOrderQty=available_usdt)
             self.logger.info(f"Ответ ордера на покупку: {order}")
             if order and "status" in order and order["status"] == "FILLED":
                 self.position = "long"
@@ -253,11 +266,11 @@ class BotController:
                 sell = True
 
             if sell:
-                available_asset = self.get_asset_balance(self.base_asset)
-                available_asset = round(available_asset, 6)
-                self.logger.info(f"Сигнал SELL: Цена {latest['Close']}, Продаём {available_asset} {self.base_asset}")
+                available_asset = self.get_asset_balance(self.trade_asset)
+                quantity = self.round_step_size(available_asset)
+                self.logger.info(f"Сигнал SELL: Цена {latest['Close']}, Продаём {quantity} {self.trade_asset}")
 
-                order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", available_asset)
+                order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", quantity=quantity)
                 self.logger.info(f"Ответ ордера на продажу: {order}")
                 if order and "status" in order and order["status"] == "FILLED":
                     self.position = None
