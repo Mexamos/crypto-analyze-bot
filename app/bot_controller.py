@@ -74,7 +74,7 @@ class BotController:
         for filter in symbol_data['filters']:
             if filter['filterType'] == 'LOT_SIZE':
                 self.step_size = float(filter['stepSize'])
-                self.quantity_precession = len(str(filter['stepSize']).split('.')[1])
+                self.quantity_precession = len(str(self.step_size).split('.')[1])
 
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
