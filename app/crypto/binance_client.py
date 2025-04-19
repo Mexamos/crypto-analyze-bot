@@ -89,6 +89,23 @@ class BinanceClient:
         url = f'{self.host}/api/v3/myTrades?{query_string}&signature={signature}'
         response = self._call(url, {})
         return response
+    
+    def get_account_convert_history(
+        self, start_time: int, end_time: int
+    ):
+        timestamp = int(time() * 1000)
+        params = {
+            'startTime': int(start_time.timestamp()) * 1000,
+            'endTime': int(end_time.timestamp()) * 1000,
+            'timestamp': timestamp
+        }
+        query_string = urllib.parse.urlencode(params)
+        signature = self._generate_signature(query_string)
+        
+        url = f'{self.host}/sapi/v1/convert/tradeFlow?{query_string}&signature={signature}'
+        response = self._call(url, {})
+
+        return response
 
     def get_all_orders(self, asset: str):
         timestamp = int(time() * 1000)

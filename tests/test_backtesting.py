@@ -18,67 +18,33 @@ BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
 SYMBOL = 'SOLUSDT'
-INTERVAL = '1s'
-HISTORICAL_PERIOD_IN_DAYS = 1
+INTERVAL = '15m'
+HISTORICAL_PERIOD_IN_DAYS = 30
 NUMBER_MISSING_SECONDS_BETWEEEN_SIGNALS = 1
+MIN_SECONDS_BETWEEN_TRADES = 60  # enforce minimum 60 sec gap between trades to reduce overtrading
 INITIAL_TRADE_AMOUNT = 300
 
 PROCESS_NUMBER_TO_LOAD_DATA = 5
 CSV_FILE = f'{SYMBOL.lower()}_{INTERVAL}_binance_klines.csv'
 DATA_HEADERS = ['Open Time', 'Open', 'High', 'Low', 'Close', 'Volume', 'Close Time', 'Quote Asset Volume', 'Number of Trades', 'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore']
 
-# BTC
-# WINDOW_HIGH = 20
-# WINDOW_MEDIUM = 5
-# WINDOW_LOW = 5
-# WINDOW_VOLUME = 100
-# 37, 10, 5, 13 - 90
-# 20, 5, 5, 100 - 89
-# 57, 21, 8, 17 - 93
-# 24, 15, 5, 41 - 54
-# 13, 6, 17, 94 - 46
-# 20, 8, 8, 48 - 57
-# 12, 20, 6, 100 - 109
-
-# ETH
-# WINDOW_HIGH = 20
-# WINDOW_MEDIUM = 5
-# WINDOW_LOW = 5
-# WINDOW_VOLUME = 50
-# 25, 20, 10, 56 - 89
-# 18, 6, 11, 93 - 52
-# 14, 15, 12, 85 - 23
-# 14, 12, 11, 21 - 25
-# 11, 21, 6, 93 - 34
-# 27, 31, 5, 83 - 114
-
 # SOL
-WINDOW_HIGH = 30
-WINDOW_MEDIUM = 5
-WINDOW_LOW = 5
+WINDOW_HIGH = 200
+WINDOW_MEDIUM = 120
+WINDOW_LOW = 80
 WINDOW_VOLUME = 30
 
 # Минимальное значение ADX для входа в сделку
-ADX_THRESHOLD = 20
+ADX_THRESHOLD = 25
 # Период для расчёта ATR
-ATR_PERIOD = 14
+ATR_PERIOD = 15
 # Множитель для стоп-лосса
 ATR_STOP_MULTIPLIER = 1.5
 
-# 48, 24, 15, 25 - 53
-# 35, 20, 7, 57 - 66
-# 67, 34, 7, 33 - 84
-# 20, 13, 10, 26 - 37
-# 44, 31, 18, 93 - 39
-# 52, 29, 5, 69 - 59
-# 30 10 6 48 - 105
-# 30 5 5 30 - 119
-# 59, 15, 13, 31 -143
-# 32, 25, 10, 93 - 93
-# 43, 36, 7, 11 - 55
-# 25, 19, 10, 54 - 47
-
-
+# Risk & Execution Parameters
+RISK_PCT = 0.02          # Risk 2% of account per trade
+COMMISSION_RATE = 0.001  # 0.1% per trade commission
+SLIPPAGE_PCT = 0.001     # Assume 0.1% slippage on both entry and exit
 
 binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
@@ -166,7 +132,7 @@ def merge_csv_files(file_list, merged_file):
 def load_and_save_data_to_file():
     remove_file(CSV_FILE)
 
-    end_date = datetime.now()
+    end_date = datetime(2024, 11, 1)
     start_date = end_date - timedelta(days=HISTORICAL_PERIOD_IN_DAYS)
     segment_duration = (end_date - start_date) / PROCESS_NUMBER_TO_LOAD_DATA
 
@@ -300,24 +266,18 @@ def calculate_signals(df, adx_threshold):
                 if pd.notna(row["atr"]):
                     stop_loss = entry_price - ATR_STOP_MULTIPLIER * row["atr"]
                 else:
-                    stop_loss = None
+                    stop_loss = entry_price * 0.98
                 i += NUMBER_MISSING_SECONDS_BETWEEEN_SIGNALS
                 continue
         else:
-            # Если позиция открыта, проверяем условия выхода:
-            # 1. Если цена опустилась ниже стоп-лосса по ATR
-            if stop_loss is not None and row["Low"] < stop_loss:
-                sell_signals[i] = True
-                position = None
-                entry_price = None
-                stop_loss = None
-                i += NUMBER_MISSING_SECONDS_BETWEEEN_SIGNALS
-                continue
-            # 2. Если цена закрытия ниже всех SMA и объём подтверждает разворот
-            if (row["Close"] < row["sma_high"] and
+            if (
+                stop_loss is not None and row["Low"] < stop_loss
+            ) or (
+                row["Close"] < row["sma_high"] and
                 row["Close"] < row["sma_medium"] and
                 row["Close"] < row["sma_low"] and
-                row["Volume"] > row["vol_ma"]):
+                row["Volume"] > row["vol_ma"]
+            ):
                 sell_signals[i] = True
                 position = None
                 entry_price = None
@@ -332,19 +292,158 @@ def calculate_signals(df, adx_threshold):
     return df
 
 
-def calculate_profit(df, initial_balance):
+def calculate_profit(df, initial_balance, commission_rate=0.001):
     balance = initial_balance
     position = 0  # Количество купленной криптовалюты
     for index, row in df.iterrows():
         if row["buy_signal"] and balance > 0:
-            position = balance / row["Close"]  # Покупка криптовалюты
+            # Покупаем крипту с учетом комиссии: комиссия уменьшает купленное количество
+            position = (balance / row["Close"]) * (1 - commission_rate)
             balance = 0
         elif row["sell_signal"] and position > 0:
-            balance = position * row["Close"]  # Продажа криптовалюты
+            # Продаем крипту с учетом комиссии: комиссия уменьшает получаемую сумму
+            balance = position * row["Close"] * (1 - commission_rate)
             position = 0
-    # Финальная стоимость (если позиция не закрыта, учитываем её текущую стоимость)
+    # Если позиция осталась открытой, учитываем ее текущую стоимость без комиссии
     final_value = balance + (position * df.iloc[-1]["Close"] if position > 0 else 0)
     return final_value - initial_balance
+
+
+# New simulation function with risk management, slippage, fee adjustment, and trade frequency control
+def simulate_trades(df, initial_balance, risk_pct=RISK_PCT, commission_rate=COMMISSION_RATE, slippage_pct=SLIPPAGE_PCT, min_seconds_between_trades=MIN_SECONDS_BETWEEN_TRADES):
+    balance = initial_balance
+    position = 0      # Number of coins held
+    entry_price = None
+    stop_loss = None
+    entry_cost = 0
+    last_trade_time = None
+    trades = []
+    
+    # Ensure the DataFrame is sorted by time
+    df = df.sort_values('Open Time').reset_index(drop=True)
+    
+    for index, row in df.iterrows():
+        current_time = row["Open Time"]
+        current_price = row["Close"]
+        
+        # Enforce a minimum gap between trades
+        if last_trade_time is not None:
+            time_diff = (current_time - last_trade_time).total_seconds()
+        else:
+            time_diff = np.inf
+        
+        # No open position: check for buy signal and time gap
+        if position == 0:
+            if row["buy_signal"] and time_diff >= min_seconds_between_trades:
+                entry_price = current_price
+                # Set stop-loss based on ATR (or fallback to a 2% drop)
+                if pd.notna(row["atr"]) and row["atr"] > 0:
+                    stop_loss = entry_price - ATR_STOP_MULTIPLIER * row["atr"]
+                else:
+                    stop_loss = entry_price * 0.98
+                risk_per_coin = entry_price - stop_loss
+                if risk_per_coin <= 0:
+                    continue
+                risk_amount = balance * risk_pct
+                position = risk_amount / risk_per_coin
+                effective_buy_price = current_price * (1 + slippage_pct)
+                entry_cost = position * effective_buy_price * (1 + commission_rate)
+                if entry_cost > balance:
+                    position = balance / (effective_buy_price * (1 + commission_rate))
+                    entry_cost = balance
+                balance -= entry_cost
+                trade_entry_time = current_time
+        else:
+            # If position is open, check for exit conditions: stop-loss hit or sell signal
+            exit_trade = False
+            exit_price = None
+            if row["Low"] < stop_loss:
+                exit_trade = True
+                exit_price = stop_loss * (1 - slippage_pct)
+            elif row["sell_signal"] and time_diff >= min_seconds_between_trades:
+                exit_trade = True
+                exit_price = current_price * (1 - slippage_pct)
+            
+            if exit_trade:
+                proceeds = position * exit_price * (1 - commission_rate)
+                balance += proceeds
+                trade_profit = proceeds - entry_cost
+                trades.append({
+                    'entry_time': trade_entry_time,
+                    'exit_time': current_time,
+                    'entry_price': entry_price,
+                    'exit_price': exit_price,
+                    'profit': trade_profit
+                })
+                # Reset trade variables and update last trade time
+                position = 0
+                entry_price = None
+                stop_loss = None
+                entry_cost = 0
+                last_trade_time = current_time
+    
+    # If a position remains open, close it at the final available price
+    if position > 0:
+        final_price = df.iloc[-1]["Close"] * (1 - slippage_pct)
+        proceeds = position * final_price * (1 - commission_rate)
+        balance += proceeds
+        trade_profit = proceeds - entry_cost
+        trades.append({
+            'entry_time': trade_entry_time,
+            'exit_time': df.iloc[-1]["Open Time"],
+            'entry_price': entry_price,
+            'exit_price': final_price,
+            'profit': trade_profit
+        })
+        position = 0
+    
+    final_equity = balance
+    total_profit = final_equity - initial_balance
+    return total_profit, trades
+
+
+def compute_performance_metrics(trades, initial_balance):
+    if not trades:
+        return {'profit': 0, 'final_equity': initial_balance, 'max_drawdown': 0,
+                'profit_factor': np.nan, 'win_rate': np.nan, 'sharpe': np.nan,
+                'equity_curve': [initial_balance]}
+    
+    equity_curve = [initial_balance]
+    for trade in trades:
+        equity_curve.append(equity_curve[-1] + trade['profit'])
+    
+    # Maximum Drawdown calculation
+    peak = -np.inf
+    max_dd = 0
+    for eq in equity_curve:
+        if eq > peak:
+            peak = eq
+        dd = (peak - eq) / peak
+        if dd > max_dd:
+            max_dd = dd
+    
+    # Profit Factor and Win Rate
+    wins = [t['profit'] for t in trades if t['profit'] > 0]
+    losses = [t['profit'] for t in trades if t['profit'] < 0]
+    profit_factor = sum(wins) / abs(sum(losses)) if losses and sum(losses) != 0 else np.nan
+    win_rate = len(wins) / len(trades) if trades else np.nan
+    
+    # Sharpe Ratio based on trade returns (normalized by initial balance)
+    trade_returns = [t['profit'] / initial_balance for t in trades]
+    if np.std(trade_returns) > 0:
+        sharpe = np.mean(trade_returns) / np.std(trade_returns) * np.sqrt(len(trade_returns))
+    else:
+        sharpe = np.nan
+    
+    return {
+        'profit': equity_curve[-1] - initial_balance,
+        'final_equity': equity_curve[-1],
+        'max_drawdown': max_dd,
+        'profit_factor': profit_factor,
+        'win_rate': win_rate,
+        'sharpe': sharpe,
+        'equity_curve': equity_curve
+    }
 
 
 def show_data_on_plot(df):
@@ -369,6 +468,9 @@ def optimize_params(param_set):
     temp_df = add_atr(temp_df, ATR_PERIOD)
     temp_df = calculate_signals(temp_df, ADX_THRESHOLD)
     profit = calculate_profit(temp_df, initial_trade_amount)
+
+    # print('["buy_signal"]', temp_df["buy_signal"].sum())
+    # print('["sell_signal"]', temp_df["sell_signal"].sum())
     return (w_high, w_medium, w_low, w_volume, profit)
 
 
@@ -376,30 +478,39 @@ def apply_trading_algorithm_to_historical_data():
     df = pd.read_csv(CSV_FILE, header=None, names=DATA_HEADERS)
     df = data_type_conversion_from_file(df)
 
-    df = add_simple_moving_average(df, WINDOW_HIGH, WINDOW_MEDIUM, WINDOW_LOW, WINDOW_VOLUME)
-    df = add_adx(df, ATR_PERIOD)
-    df = add_atr(df, ATR_PERIOD)
-    df = calculate_signals(df, ADX_THRESHOLD)
-    profit = calculate_profit(df, INITIAL_TRADE_AMOUNT)
-    print(f"Final Profit: {profit:.2f} USDT")
+    # df = add_simple_moving_average(df, WINDOW_HIGH, WINDOW_MEDIUM, WINDOW_LOW, WINDOW_VOLUME)
+    # df = add_adx(df, ATR_PERIOD)
+    # df = add_atr(df, ATR_PERIOD)
+    # df = calculate_signals(df, ADX_THRESHOLD)
+    # # profit = calculate_profit(df, INITIAL_TRADE_AMOUNT)
+    # # print(f"Final Profit: {profit:.2f} USDT")
+
+    # profit, trades = simulate_trades(df, INITIAL_TRADE_AMOUNT)
+    # metrics = compute_performance_metrics(trades, INITIAL_TRADE_AMOUNT)
+    # print(f"Final Profit: {profit:.2f} USDT")
+    # print(f"Final Equity: {metrics['final_equity']:.2f} USDT")
+    # print(f"Max Drawdown: {metrics['max_drawdown']*100:.2f}%")
+    # print(f"Profit Factor: {metrics['profit_factor']:.2f}")
+    # print(f"Win Rate: {metrics['win_rate']*100:.2f}%")
+    # print(f"Sharpe Ratio: {metrics['sharpe']:.2f}")
 
 
-    # num_samples = 50
-    # random_params = [
-    #     (
-    #         df.copy(),
-    #         INITIAL_TRADE_AMOUNT,
-    #         random.randint(10, 100), 
-    #         random.randint(5, 50), 
-    #         random.randint(5, 20), 
-    #         random.randint(10, 100)
-    #     ) 
-    #     for _ in range(num_samples)
-    # ]
-    # with Pool(processes=8) as pool:
-    #     results = pool.map(optimize_params, random_params)
-    # best_params = max(results, key=lambda x: x[4])
-    # print('best_params', best_params)
+    num_samples = 150
+    random_params = [
+        (
+            df.copy(),
+            INITIAL_TRADE_AMOUNT,
+            random.randint(100, 5000), 
+            random.randint(50, 3000), 
+            random.randint(5, 1000), 
+            random.randint(30, 5000)
+        ) 
+        for _ in range(num_samples)
+    ]
+    with Pool(processes=8) as pool:
+        results = pool.map(optimize_params, random_params)
+    best_params = max(results, key=lambda x: x[4])
+    print('best_params', best_params)
 
 
 if __name__ == '__main__':
