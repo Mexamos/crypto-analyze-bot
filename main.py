@@ -1,29 +1,46 @@
 import os
-from datetime import datetime
 
 from dotenv import load_dotenv
-from redis import Redis
 
 from app.bot_controller import BotController
+from app.database.client import DatabaseClient
+from app.crypto.coindesk_client import CoindeskClient
+from app.crypto.coingecko_client import CoingeckoClient
+from app.crypto.coinmarketcap_client import CoinmarketcapClient
+from app.crypto.cryptopanic_client import CryptopanicClient
+from app.crypto.newsapi_client import NewsapiClient
 from app.crypto.binance_client import BinanceClient
+from app.analytics.chart import ChartController
 from app.config import Config
+from app.analytics.google_sheets_client import GoogleSheetsClient
 from app.monitoring.sentry import SentryClient
 
 load_dotenv()
 
+TOKEN = os.getenv('BOT_TOKEN')
+BOT_CHAT_ID = os.getenv('BOT_CHAT_ID')
+
+COIN_MARKET_CAP_API_KEY = os.getenv('COIN_MARKET_CAP_API_KEY')
+COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
+SANTIMENT_API_KEY = os.getenv('SANTIMENT_API_KEY')
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+CRYPTOPANIC_AUTH_TOKEN = os.getenv('CRYPTOPANIC_AUTH_TOKEN')
+
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
-REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
-REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
+CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
+SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
 
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
-# TODO Записать все хосты и порты в конфиг и брать оттуда
-
 # TODO Add for requests raises exceptions !!!!!!!!!!
 
-# TODO добавить сентри
+# TODO urls
+# /v2/cryptocurrency/quotes/historical
+# /v1/cryptocurrency/listings/historical
+
+# TODO порешать ошибки из сентри
 
 # TODO написать Readme.md
 
@@ -33,59 +50,38 @@ SENTRY_DSN = os.getenv('SENTRY_DSN')
 
 def main():
     config = Config()
+    db_client = DatabaseClient()
 
-    binance_cleint = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
-    redis_client = Redis(host=REDIS_HOST, port=6379, db=0, password=REDIS_PASSWORD)
+    # chart_controller = ChartController(db_client, config)
+    # google_sheets_client = GoogleSheetsClient(CREDENTIALS_FILE_PATH, SPREADSHEET_ID)
+
+    # cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY, config)
+    coindesk_client = CoindeskClient('https://data-api.coindesk.com')
+    coingecko_client = CoingeckoClient('https://api.coingecko.com', COINGECKO_API_KEY, config)
+    cryptopanic_client = CryptopanicClient('https://cryptopanic.com', CRYPTOPANIC_AUTH_TOKEN)
+    newsapi_client = NewsapiClient('https://newsapi.org', NEWS_API_KEY)
+    binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
     # sentry_client = SentryClient(SENTRY_DSN, config)
 
-    # bot_controller = BotController(
-    #     config, binance_cleint, redis_client
-    # )
-    # bot_controller.request_static_data()
-    # bot_controller.run_bot()
+    telegram_controller = BotController(
+        db_client,
+        binance_client,
+        coingecko_client,
+        coindesk_client,
+        cryptopanic_client,
+        newsapi_client,
+        config,
+        TOKEN,
+        BOT_CHAT_ID,
+    )
+    telegram_controller.init_bot()
+    telegram_controller.get_all_coins()
+    telegram_controller.run_bot()
 
-# if __name__ == "__main__":
-#     main()
 
-
-
-import requests
-from datetime import datetime, timedelta, timezone
-
-def get_crypto_news():
-    url = "https://cryptopanic.com/api/free/v1/posts/"
-    params = {
-        "auth_token": "8996a617d6e3e48c9edeafa8e54810426352e6b5",
-        # "currencies": "BTC",
-        "filter": "hot",
-        "public": "true"
-    }
-    r = requests.get(url, params=params)
-    return r.json().get("results", [])
-
-def analyze_post(post):
-    print('post', post)
-    votes = post.get("votes", {})
-    pos = votes.get("positive", 0)
-    neg = votes.get("negative", 0)
-    total = pos + neg + 1
-    score = (pos - neg) / total
-
-    published = datetime.fromisoformat(post["published_at"].replace("Z", "+00:00"))
-    now = datetime.now(timezone.utc)
-    is_recent = now - published < timedelta(days=1)
-
-    return score if is_recent else 0
-
-# hot_posts = get_crypto_news()
-# total_score = 0
-# for post in hot_posts:
-#     total_score += analyze_post(post)
-
-# total_score = total_score / len(hot_posts)
-# print('total_score', total_score)
-# print('The result should be between -1 and 1')
+if __name__ == "__main__":
+    main()
 
 
 # import san
@@ -169,140 +165,3 @@ def analyze_post(post):
 # )
 
 # print(trends["word"].unique())
-
-
-
-
-
-
-
-
-import os
-import requests
-import time
-import logging
-from requests.exceptions import HTTPError
-import pandas as pd
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-
-# --- Конфиг ---
-HEADERS = {
-    "accept": "application/json",
-    "x-cg-api-key": "CG-TpiMzNseLaFZQmyL243SPSZ7"
-}
-session = requests.Session()
-session.headers.update(HEADERS)
-
-TRENDING_URL   = "https://api.coingecko.com/api/v3/search/trending"
-NEWS_API_KEY   = '371db309258d48a498e90303233ef691'
-analyzer       = SentimentIntensityAnalyzer()
-
-def fetch_trending_coins():
-    """
-    Возвращает список трендовых монет (по умолчанию top 15).
-    Каждая запись — dict с ключами: id, name, symbol, market_cap_rank и т.п.
-    """
-    r = requests.get(TRENDING_URL, headers=HEADERS)
-    r.raise_for_status()
-    items = r.json().get("coins", [])
-    return [entry["item"] for entry in items]
-
-def fetch_coin_sentiment(
-    coin_id: str,
-    max_retries: int = 3,
-    backoff_factor: float = 1.0,
-):
-    """
-    Берёт sentiment_votes_up/down (%) из community_data
-    """
-    url = f"https://api.coingecko.com/api/v3/coins/{coin_id}"
-    params = {
-        "localization":      "false",
-        "tickers":           "false",
-        "market_data":       "false",
-        "community_data":    "false",
-        "developer_data":    "false",
-        "sparkline":         "false",
-    }
-    for attempt in range(1, max_retries + 1):
-        try:
-            r = requests.get(url, headers=HEADERS, params=params)
-            r.raise_for_status()
-            response = r.json()
-
-            up_pct   = response.get("sentiment_votes_up_percentage",   0)
-            down_pct = response.get("sentiment_votes_down_percentage", 0)
-            # Приводим к [0–1]
-            total = up_pct + down_pct
-            return (up_pct/total) if total else 0.5
-
-        except HTTPError as e:
-            status = getattr(e.response, "status_code", None)
-            # Если rate limit — ждём и пробуем снова
-            if status == 429:
-                ra = e.response.headers.get("Retry-After")
-                wait = (
-                    (int(ra) if ra and ra.isdigit() else 60) + backoff_factor * (attempt - 1)
-                )
-                logging.warning(
-                    f"[{coin_id}] 429 Too Many Requests — спим {wait}s "
-                    f"(попытка {attempt}/{max_retries})"
-                )
-                time.sleep(wait)
-                continue
-            # Для других ошибок — логируем и возвращаем нейтральный
-            logging.error(f"[{coin_id}] HTTP {status}: {e}, ставим 0.5")
-            return 0.5
-
-def get_news_sentiment(query: str):
-    """
-    Достаёт заголовки/описания из NewsAPI и считает compound‑оценку VADER
-    """
-    url = "https://newsapi.org/v2/everything"
-    params = {"q": query, "pageSize": 10, "apiKey": NEWS_API_KEY}
-    art = requests.get(url, params=params).json().get("articles", [])
-    scores = [
-        analyzer.polarity_scores(a["title"] + " " + (a.get("description") or ""))["compound"]
-        for a in art
-    ]
-    return (sum(scores) / len(scores)) if scores else 0
-
-# --- Основная логика ---
-# 1) Берём трендовые монеты
-trending = fetch_trending_coins()  # список до 15 items
-
-print('trending', len(trending))
-# 2) Сбор данных
-rows = []
-for coin in trending:
-    cid    = coin["id"]       # строковый coin_id, например "bitcoin"
-    sym    = coin["symbol"]   # например "btc"
-    # 2.1) Комьюнити‑сентимент
-    comm_score = fetch_coin_sentiment(cid)
-    # 2.2) Новостной сентимент (опционально)
-    news_score = get_news_sentiment(coin["name"])
-    rows.append({
-        "symbol":     sym.upper(),
-        "comm_score": comm_score,
-        "news_score": news_score
-    })
-
-print('rows', rows)
-print('rows', len(rows))
-df = pd.DataFrame(rows)
-
-# 3) Нормализация
-for col in ("comm_score", "news_score"):
-    mn, mx = df[col].min(), df[col].max()
-    print('mn', mn)
-    print('mx', mx)
-    df[col + "_n"] = (df[col] - mn) / (mx - mn) if mx > mn else 0.5
-
-# 4) Composite Score и сигнал
-df["composite"] = 0.7 * df["comm_score_n"] + 0.3 * df["news_score_n"]
-df["signal"] = df["composite"].apply(
-    lambda x: "BUY"  if x > 0.7 else ("SELL" if x < 0.3 else "HOLD")
-)
-
-# 5) Вывод
-print(df.sort_values("composite", ascending=False)[["symbol","composite","signal"]])

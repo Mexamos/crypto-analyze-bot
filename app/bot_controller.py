@@ -1,286 +1,378 @@
-import json
+import logging
 import math
-from logging import getLogger, INFO, StreamHandler, FileHandler, Formatter
-from logging.handlers import RotatingFileHandler
-from time import sleep
+from asyncio import sleep
+from datetime import datetime
+from decimal import Decimal
+from typing import List, Set, Dict
 
 import pandas as pd
-import numpy as np
-from pandas import DataFrame
-from redis import Redis
-from websocket import WebSocketApp
-from websocket._exceptions import WebSocketConnectionClosedException
+import requests
+from requests.exceptions import HTTPError
+from telegram import Update
+from telegram.constants import ParseMode
+from telegram.ext import Application, CommandHandler, ContextTypes
+from pytz import timezone
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
+from app.database.client import DatabaseClient
+from app.database.models import CurrencyPrice
+from app.crypto.coindesk_client import CoindeskClient
+from app.crypto.coingecko_client import CoingeckoClient
+from app.crypto.coinmarketcap_client import CoinmarketcapClient, CmcException
+from app.crypto.cryptopanic_client import CryptopanicClient
 from app.crypto.binance_client import BinanceClient
+from app.crypto.newsapi_client import NewsapiClient
+from app.analytics.chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
 from app.config import Config
+from app.analytics.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
+from app.utils import scientific_notation_to_usual_format
 from app.monitoring.sentry import SentryClient
 
 
 class BotController:
 
     def __init__(
-        self, config: Config, binance_cleint: BinanceClient, redis_client: Redis
+        self,
+        db_client: DatabaseClient,
+        binance_client: BinanceClient,
+        coingecko_client: CoingeckoClient,
+        coindesk_client: CoindeskClient,
+        cryptopanic_client: CryptopanicClient,
+        newsapi_client: NewsapiClient,
+        config: Config,
+        token: str,
+        chat_id: str,
     ) -> None:
-        self.bot_is_running = True
-        self.restart_time = 30
+        self.db_client = db_client
+        self.binance_client = binance_client
+        self.coingecko_client = coingecko_client
+        self.coindesk_client = coindesk_client
+        self.cryptopanic_client = cryptopanic_client
+        self.newsapi_client = newsapi_client
+        self.config = config
 
-        self.init_logs(config.logs_file_path)
+        self.symbol_to_coingecko_id = {}
 
-        self.base_asset = config.base_asset
-        self.trade_asset = config.trade_asset
-        self.symbol = config.symbol
-        self.minimum_trade_amount = config.minimum_trade_amount
-        self.ws_endpoint = f"wss://stream.binance.com:9443/ws/{self.symbol.lower()}@kline_1s"
+        self.bot_token = token
+        self.chat_id = int(chat_id)
 
-        self.binance_cleint = binance_cleint
-        self.redis_client = redis_client
+        self.known_currencies = set()
 
-        self.position = config.position
-        self.window_high = config.window_high
-        self.window_medium = config.window_medium
-        self.window_low = config.window_low
-        self.vol_window = config.vol_window
-        self.adx_threshold = config.adx_threshold
-        self.atr_period = config.atr_period
-        self.atr_stop_multiplier = config.atr_stop_multiplier
-        self.stop_loss = None
-        self.quantity_precession = 0
+        self.out_of_trend_currencies = set()
 
-    def init_logs(self, logs_file_path: str):
-        self.logger = getLogger('bot')
-        self.logger.setLevel(INFO)
-        formatter = Formatter(
-            fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            datefmt='%d.%m.%Y %H:%M:%S'
+        self.timezone = timezone(self.config.timezone_name)
+        self.launch_datetime = datetime.now(self.timezone)
+
+        self.stop_buying_flag = False
+
+        self.sentiment_intensity_analyzer = SentimentIntensityAnalyzer()
+
+    def init_bot(self):
+        self.app = Application.builder().token(self.bot_token).build()
+
+        # self.app.add_handler(CommandHandler("health", self.health))
+        # self.app.add_handler(CommandHandler("get_config", self.get_config))
+        # self.app.add_handler(CommandHandler("change_config", self.change_config))
+        # self.app.add_handler(CommandHandler("stop_buying", self.stop_trading))
+        # self.app.add_handler(CommandHandler("start_buying", self.start_trading))
+        # self.app.add_handler(CommandHandler("stop", self.stop))
+
+        job_queue = self.app.job_queue
+        job_queue.run_repeating(
+            self.process_trending_currencies, interval=self.config.process_task_interval, first=1
         )
 
-        stream_handler = StreamHandler()
-        stream_handler.setLevel(INFO)
-        stream_handler.setFormatter(formatter)
-
-        file_handler = FileHandler(logs_file_path)
-        file_handler.setLevel(INFO)
-        file_handler.setFormatter(formatter)
-
-        rotating_file_handler = RotatingFileHandler(logs_file_path, maxBytes=1000000, backupCount=5)  # 1 MB
-
-        self.logger.addHandler(rotating_file_handler)
-        self.logger.addHandler(stream_handler)
-        self.logger.addHandler(file_handler)
-
-    def request_static_data(self):
-        response = self.binance_cleint.exchange_info(self.symbol)
-        symbol_data = response['symbols'][0]
-        for filter in symbol_data['filters']:
-            if filter['filterType'] == 'LOT_SIZE':
-                self.step_size = float(filter['stepSize'])
-                self.quantity_precession = len(str(self.step_size).split('.')[1])
+    def get_all_coins(self):
+        all_coins = self.coingecko_client._get_coins_list()
+        self.symbol_to_coingecko_id = {
+            coin["symbol"].upper(): coin["id"] 
+            for coin in all_coins
+        }
 
     def run_bot(self):
         # Run the bot until the user presses Ctrl-C
-        while self.bot_is_running:
-            ws = WebSocketApp(
-                self.ws_endpoint,
-                on_open=self.on_open,
-                on_message=self.on_message,
-                on_error=self.on_error,
-                on_close=self.on_close,
-            )
-            self.logger.info("Запуск потоковой торговли...")
-            ws.run_forever(ping_interval=20, ping_timeout=10)
+        self.app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    def on_message(self, ws, message):
+    # async def stop_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     self.stop_buying_flag = True
+
+    # async def start_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     self.stop_buying_flag = False
+
+    # async def stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     jobs =  context.job_queue.jobs()
+    #     for job in jobs:
+    #         job.schedule_removal()
+
+    #     await self._sell_or_record_to_table_rest_currencies(context)
+
+    #     await self._generate_incomes_report()
+
+    #     self.app.stop_running()
+    #     await update.message.reply_text('Bot stopped')
+
+    # async def health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     jobs = context.job_queue.jobs()
+
+    #     currency_prices_count = self.db_client.count_all_currency_price()
+
+    #     self.google_sheets_client.append_to_test_connection(datetime.now(self.timezone))
+    #     google_sheet_link = f'https://docs.google.com/spreadsheets/d/{self.google_sheets_client.spreadsheet_id}/'
+
+    #     coin_market_cap_latest_request_datetime = (
+    #         self.cmc_client.latest_request_datetime.strftime("%d.%m.%Y %H:%M:%S")
+    #         if self.cmc_client.latest_request_datetime else None
+    #     )
+
+    #     await update.message.reply_text(f'number_running_tasks={len(jobs)}')
+    #     await update.message.reply_text(f'currency_prices_count={currency_prices_count}')
+    #     await update.message.reply_text(f'google_sheet_link={google_sheet_link}')
+    #     await update.message.reply_text(f'coin_market_cap_latest_request_datetime={coin_market_cap_latest_request_datetime}')
+
+    # async def get_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     parameter_list = '\n'.join([f'{name}={getattr(self.config, name)}' for name in self.config.parameter_list])
+    #     await update.message.reply_text(parameter_list)
+
+    # async def change_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id != self.chat_id:
+    #         return
+
+    #     if len(context.args) < 2:
+    #         await update.message.reply_text('Need config parameter name and new value as comand arguments!')
+    #         return
+
+    #     try:
+    #         self.config.change_value(context.args[0], context.args[1])
+    #     except BaseException as ex:
+    #         self.sentry_client.capture_exception(ex)
+
+    def _get_trending_coins(self):
+        response = self.coingecko_client._get_trending_coins()
+        return [entry['item'] for entry in response.get('coins', [])]
+
+    async def _get_coin_sentiment(
+        self, coin_id: str, max_retries: int = 3, backoff_factor: float = 1.0
+    ) -> float:
+        # for attempt in range(1, max_retries + 1):
+        #     try:
+        #         response = self.coingecko_client._get_coin_by_id(coin_id)
+        #         up_pct = response.get('sentiment_votes_up_percentage', 0) or 0
+        #         down_pct = response.get('sentiment_votes_down_percentage', 0) or 0
+
+        #         total = up_pct + down_pct
+        #         return (up_pct / total) if total else 0.5
+        #     except HTTPError as exc:
+        #         status = getattr(exc.response, 'status_code', None)
+        #         if status == 429:
+        #             retry_after = exc.response.headers.get('Retry-After')
+        #             wait_time = (
+        #                 int(retry_after) if retry_after and retry_after.isdigit() else 60
+        #             ) + backoff_factor * (attempt - 1)
+        #             logging.warning(f'[{coin_id}] 429, sleeping {wait_time}s (attempt {attempt})')
+        #             await sleep(wait_time)
+        #             continue
+
+        #         logging.error(f'[{coin_id}] HTTP {status}: {exc}, returning 0.5')
+        #         return 0.5
+
+        # logging.error(f'[{coin_id}] Failed {max_retries} attempts, returning 0.5')
+        return 0.5
+
+    def _get_coindesk_articles(self, lang: str = "EN", limit: int = 10) -> list:
+        response = self.coindesk_client._get_news_article_list(
+            lang=lang, limit=limit
+        )
+        return response.get("Data", [])
+
+    def _get_cryptopanic_posts(self, limit: int = 50) -> list:
+        response = self.cryptopanic_client._get_free_posts(limit)
+        return response.get("results", [])
+
+    def get_news_sentiment(self, query: str) -> float:
         try:
-            msg = json.loads(message)
-            self.process_message(msg)
-        except WebSocketConnectionClosedException as exc:
-            ws.close_exc = exc
-            ws.close()
-        except BaseException as exc:
-            exc_data = exc
-            if hasattr(exc, 'response') and hasattr(exc.response, 'json'):
-                exc_data = exc.response.json()
+            response = self.newsapi_client._get_everything(query)
+            articles = response.get("articles", [])
+        except HTTPError as exc:
+            exception_body = exc.response.json()
+            logging.error(f'NewsAPI failed for {query}: {exception_body}')
+            return 0.5
 
-            self.logger.exception(f'Ошибка обработки сообщения: {exc_data}')
-            ws.close()
+        scores = [
+            self.sentiment_intensity_analyzer.polarity_scores(
+                article.get("title","") + " " + (article.get("description") or "")
+            )["compound"]
+            for article in articles
+        ]
+        return (sum(scores) / len(scores)) if scores else 0.5
 
-    def on_error(self, ws, error):
-        if type(error) not in (KeyboardInterrupt, WebSocketConnectionClosedException):
-            self.logger.exception(f"WebSocket error: {error}")
+    async def _filter_currencies_by_binance(self, currencies: List[dict]) -> List[dict]:
+        available_currencies = []
+        for currency in currencies:
+            try:
+                exchange_info = self.binance_client.exchange_info(currency['exchange_symbol'])
+                if exchange_info:
+                    available_currencies.append(currency)
+            except HTTPError as exc:
+                exception_body = exc.response.json()
+                logging.error(
+                    f'Get Binance exchange_info failed for {currency["exchange_symbol"]}: {exception_body}'
+                )
+                continue
 
-    def on_close(self, ws, close_status_code, close_msg):
-        self.logger.info("WebSocket закрыт")
+        return available_currencies
 
-        close_exc = getattr(ws, 'close_exc', None)
-        if not isinstance(close_exc, WebSocketConnectionClosedException):
-            self.bot_is_running = False
-        else:
-            self.logger.error(f"Ошибка WebSocket: {close_exc}. Попытка переподключения через {self.restart_time} секунд...")
-            sleep(self.restart_time)
+    async def _filter_conversion_currency(self, currencies: List[dict]) -> List[dict]:
+        available_currencies = []
+        for currency in currencies.values():
+            if currency['symbol'] != self.config.currency_conversion:
+                available_currencies.append(currency)
 
-    def on_open(self, ws):
-        self.logger.info("WebSocket соединение установлено")
+        return available_currencies
 
-    def process_message(self, msg: dict):
-        """
-        Обрабатывает входящие сообщения WebSocket.
-        Если получена закрытая свеча (kline), обновляет глобальный DataFrame и проверяет сигналы.
-        """
-        # Проверяем, что сообщение – это событие kline
-        if msg.get("e") != "kline":
-            return
+    async def _forming_currencies_list(
+        self, trending_coins, coindesk_articles, cryptopanic_posts
+    ) -> Dict[str, str]:
+        coin_info: dict[str, dict[str, str]] = {}
+        seen = set()
+        for coin in trending_coins:
+            cid = coin['id']
+            symbol = coin['symbol'].upper()
+            if symbol in seen:
+                continue
 
-        kline = msg["k"]
-        is_candle_closed = kline["x"]
-
-        # Извлекаем данные свечи
-        open_time = pd.to_datetime(kline["t"], unit="ms")
-        open_price = float(kline["o"])
-        high_price = float(kline["h"])
-        low_price = float(kline["l"])
-        close_price = float(kline["c"])
-        volume = float(kline["v"])
-        close_time = pd.to_datetime(kline["T"], unit="ms")
-
-        if is_candle_closed:
-            new_row = {
-                "Open Time": open_time.isoformat(),
-                "Open": open_price,
-                "High": high_price,
-                "Low": low_price,
-                "Close": close_price,
-                "Volume": volume,
-                "Close Time": close_time.isoformat()
+            coin_info[cid] = {
+                'symbol': symbol,
+                'exchange_symbol': symbol + self.config.currency_conversion,
+                'name': coin['name']
             }
+            seen.add(symbol)
 
-            self.redis_client.rpush("candles", json.dumps(new_row))
-            # Ограничиваем список последних 100 свечей
-            self.redis_client.ltrim("candles", -100, -1)
+        for article in coindesk_articles:
+            for asset in article.get('assets', []):
+                slug = asset.get('slug', '').lower()
+                symbol = slug.upper()
+                if not slug or slug in coin_info or symbol in seen:
+                    continue
 
-            self.update_signals_and_trade()
+                coin_info[slug] = {
+                    'symbol': symbol,
+                    'exchange_symbol': symbol + self.config.currency_conversion,
+                    'name': asset.get('name', slug)
+                }
+                seen.add(symbol)
 
-    def parse_datetime(self, data):
-        if '.' in data:
-            return pd.to_datetime(data, format="%Y-%m-%dT%H:%M:%S.%f")
-        else:
-            return pd.to_datetime(data, format="%Y-%m-%dT%H:%M:%S")
+        for post in cryptopanic_posts:
+            for cur in post.get('currencies', []):
+                slug = cur.get('code', '').lower()
+                symbol = slug.upper()
+                if not slug or slug in coin_info or symbol in seen:
+                    continue
 
-    def calculate_indicators(self, df: DataFrame) -> DataFrame:
-        # Преобразуем поля времени в datetime
-        df["Open Time"] = df["Open Time"].apply(self.parse_datetime)
-        df["Close Time"] = df["Close Time"].apply(self.parse_datetime)
+                coin_info[slug] = {
+                    'symbol': symbol,
+                    'exchange_symbol': symbol + self.config.currency_conversion,
+                    'name': symbol
+                }
+                seen.add(symbol)
 
-        # Вычисление скользящих средних для цены закрытия
-        df["sma_high"] = df["Close"].rolling(window=self.window_high).mean()
-        df["sma_medium"] = df["Close"].rolling(window=self.window_medium).mean()
-        df["sma_low"] = df["Close"].rolling(window=self.window_low).mean()
-        # Скользящая средняя для объёма
-        df["vol_ma"] = df["Volume"].rolling(window=self.vol_window).mean()
+        coin_info = await self._filter_conversion_currency(coin_info)
+        return await self._filter_currencies_by_binance(coin_info)
 
-        # --- Вычисляем ATR ---
-        df["H-L"] = df["High"] - df["Low"]
-        df["H-PC"] = (df["High"] - df["Close"].shift(1)).abs()
-        df["L-PC"] = (df["Low"] - df["Close"].shift(1)).abs()
-        df["TR"] = df[["H-L", "H-PC", "L-PC"]].max(axis=1)
-        df["atr"] = df["TR"].rolling(window=self.atr_period).mean()
+    async def _get_metrics_per_currency(
+        self, coin_info, cryptopanic_posts
+    ):
+        rows: List[dict[str, float | str]] = []
+        for info in coin_info:
+            symbol = info['symbol']
+            name = info['name']
+            coingecko_id = self.symbol_to_coingecko_id.get(symbol)
 
-        # --- Вычисляем ADX ---
-        df["up_move"] = df["High"] - df["High"].shift(1)
-        df["down_move"] = df["Low"].shift(1) - df["Low"]
-        df["+DM"] = np.where((df["up_move"] > df["down_move"]) & (df["up_move"] > 0), df["up_move"], 0)
-        df["-DM"] = np.where((df["down_move"] > df["up_move"]) & (df["down_move"] > 0), df["down_move"], 0)
-        df["TR_sum"] = df["TR"].rolling(window=self.atr_period).sum()
-        df["+DM_sum"] = df["+DM"].rolling(window=self.atr_period).sum()
-        df["-DM_sum"] = df["-DM"].rolling(window=self.atr_period).sum()
-        df["+DI"] = 100 * (df["+DM_sum"] / df["TR_sum"])
-        df["-DI"] = 100 * (df["-DM_sum"] / df["TR_sum"])
-        df["DX"] = 100 * (abs(df["+DI"] - df["-DI"]) / (df["+DI"] + df["-DI"]))
-        df["adx"] = df["DX"].rolling(window=self.atr_period).mean()
+            comm_score = await self._get_coin_sentiment(coingecko_id)
+            await sleep(1)
 
+            news_score = self.get_news_sentiment(name)
+
+            cp_posts = [
+                p for p in cryptopanic_posts
+                if any(c.get('code', '').lower() == symbol.lower() for c in p.get('currencies', []))
+            ]
+            cp_score = sum(
+                p.get('votes', {}).get('positive', 0) - p.get('votes', {}).get('negative', 0)
+                for p in cp_posts
+            )
+
+            rows.append({
+                "symbol": symbol,
+                "comm_score": comm_score,
+                "news_score": news_score,
+                "cryptopanic_score": cp_score,
+            })
+
+        return rows
+
+    async def _calculate_signals(self, rows) -> pd.DataFrame:
+        # Build DataFrame and normalize
+        df = pd.DataFrame(rows)
+        for col in ["comm_score", "news_score", "cryptopanic_score"]:
+            mn, mx = df[col].min(), df[col].max()
+            df[f"{col}_n"] = (df[col] - mn) / (mx - mn) if mx > mn else 0.5
+
+        # Compute composite score (renormalized weights) and signal
+        # Original weights: 0.5, 0.2, 0.2 -> sum=0.9; normalized -> 0.556, 0.222, 0.222
+        df["composite"] = (
+            0.556 * df["comm_score_n"] +
+            0.222 * df["news_score_n"] +
+            0.222 * df["cryptopanic_score_n"]
+        )
+        df["signal"] = df["composite"].apply(
+            lambda x: "BUY" if x > 0.7 else ("SELL" if x < 0.3 else "HOLD")
+        )
         return df
 
-    def round_step_size_with_precision(self, quantity, decimals):
-        # First, round down to the nearest valid multiple of step_size
-        valid_quantity = math.floor(quantity / self.step_size) * self.step_size
-        # Then, round down the result to the desired precision
-        factor = 10 ** decimals
-        return math.floor(valid_quantity * factor) / factor
+    async def _generate_massage(self, df):
+        results = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
+        message_lines = [
+            f"{row['symbol']}" + ((12 - len(row['symbol'])) * ' ') + f"{row['composite']:.3f} ({row['signal']})"
+            for _, row in results.iterrows()
+        ]
+        return '```\n' + "\n".join(message_lines) + '```'
 
-    def update_signals_and_trade(self):
-        """
-        Рассчитывает скользящие средние и, если условия выполнены, отправляет ордера.
-        """
-        # Для расчёта индикаторов нужно минимум WINDOW_HIGH свечей
-        candles_data = self.redis_client.lrange("candles", 0, -1)
-        if len(candles_data) < self.window_high:
-            self.logger.info(f'Not enough data. Current: {len(candles_data)}, requires: {self.window_high}')
-            return
+    async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            trending_coins = self._get_trending_coins()
+            coindesk_articles = self._get_coindesk_articles(limit=10)
+            cryptopanic_posts = self._get_cryptopanic_posts(limit=50)
 
-        data_list = [json.loads(item.decode('utf-8')) for item in candles_data]
-        df = DataFrame(data_list)
+            coin_info = await self._forming_currencies_list(
+                trending_coins, coindesk_articles, cryptopanic_posts
+            )
 
-        df = self.calculate_indicators(df)
+            rows = await self._get_metrics_per_currency(coin_info, cryptopanic_posts)
 
-        # Берём самую последнюю свечу
-        latest = df.iloc[-1]
+            df = await self._calculate_signals(rows)
 
-        # --- Логика сигналов ---
-        # Сигнал на покупку: если позиции нет и цена закрытия выше всех SMA, а объём выше средней величины объёма
-        if (
-            not self.position and
-            latest["adx"] >= self.adx_threshold and
-            latest["Close"] > latest["sma_high"] and
-            latest["Close"] > latest["sma_medium"] and
-            latest["Close"] > latest["sma_low"] and
-            latest["Volume"] > latest["vol_ma"]
-        ):
-            # Получаем баланс USDT
-            available_usdt = self.get_asset_balance(self.base_asset)
-            self.logger.info(f'Доступное количество USDT: {available_usdt}')
-            if available_usdt < self.minimum_trade_amount:
-                self.logger.info(f'Недостаточно средств для покупки: {available_usdt} USDT. Минимум: {self.minimum_trade_amount}')
-                return
+            message = await self._generate_massage(df)
+            print(message)
+            await context.bot.send_message(self.chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
-            # Используем доступные USDT как сумму для покупки (quoteOrderQty)
-            self.logger.info(f"Сигнал BUY: Цена {latest['Close']}, Покупаем на сумму {available_usdt} {self.base_asset}")
-
-            order = self.binance_cleint.make_order(self.symbol, "BUY", "MARKET", quoteOrderQty=available_usdt)
-            self.logger.info(f"Ответ ордера на покупку: {order}")
-            if order and "status" in order and order["status"] == "FILLED":
-                self.position = "long"
-
-                # Сохраняем цену входа и рассчитываем уровень стоп-лосса по ATR
-                self.entry_price = latest["Close"]
-                if not pd.isna(latest["atr"]):
-                    self.stop_loss = self.entry_price - self.atr_stop_multiplier * latest["atr"]
-                else:
-                    self.stop_loss = None
-
-        # Сигнал на продажу: если позиция открыта и цена закрытия ниже всех SMA, а объём выше средней величины объёма
-        elif self.position == "long":
-            sell = False
-            if self.stop_loss is not None and latest["Low"] < self.stop_loss:
-                self.logger.info(f"Stop-loss сработал: Latest low {latest['Low']} < stop_loss {self.stop_loss}")
-                sell = True
-            elif (
-                latest["Close"] < latest["sma_high"] and
-                latest["Close"] < latest["sma_medium"] and
-                latest["Close"] < latest["sma_low"] and
-                latest["Volume"] > latest["vol_ma"]
-            ):
-                sell = True
-
-            if sell:
-                available_asset = self.get_asset_balance(self.trade_asset)
-                quantity = self.round_step_size_with_precision(available_asset, self.quantity_precession)
-                self.logger.info(f"Сигнал SELL: Цена {latest['Close']}, Продаём {quantity} {self.trade_asset}")
-
-                order = self.binance_cleint.make_order(self.symbol, "SELL", "MARKET", quantity=quantity)
-                self.logger.info(f"Ответ ордера на продажу: {order}")
-                if order and "status" in order and order["status"] == "FILLED":
-                    self.position = None
-                    self.entry_price = None
-                    self.stop_loss = None
-
-    def get_asset_balance(self, asset: str) -> float:
-        return self.binance_cleint.get_account_balance(asset)
+        except CmcException as ex:
+            print('CmcException ex', ex)
+            # self.sentry_client.capture_exception(ex)
+        except BaseException as ex:
+            print('BaseException ex', ex)
+            # self.sentry_client.capture_exception(ex)
