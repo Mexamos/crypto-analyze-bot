@@ -1,32 +1,48 @@
 import logging
-import math
-from asyncio import sleep
-from datetime import datetime
-from decimal import Decimal
-from typing import List, Set, Dict
+import json
+from asyncio import sleep as async_sleep
+from typing import List, Dict
+from functools import wraps
+from time import sleep as sync_sleep
 
 import pandas as pd
-import requests
 from requests.exceptions import HTTPError
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
-from pytz import timezone
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from redis import Redis
 
 from app.database.client import DatabaseClient
-from app.database.models import CurrencyPrice
 from app.crypto.coindesk_client import CoindeskClient
 from app.crypto.coingecko_client import CoingeckoClient
-from app.crypto.coinmarketcap_client import CoinmarketcapClient, CmcException
 from app.crypto.cryptopanic_client import CryptopanicClient
 from app.crypto.binance_client import BinanceClient
 from app.crypto.newsapi_client import NewsapiClient
-from app.analytics.chart import ChartController, DataForChartNotFound, DataForIncomesTableNotFound
 from app.config import Config
-from app.analytics.google_sheets_client import GoogleSheetsClient, GoogleSheetAppendIncomeFailed
-from app.utils import scientific_notation_to_usual_format
 from app.monitoring.sentry import SentryClient
+
+
+def retry_on_status_code(
+    expected_status_code: int, max_retries: int = 3, backoff_factor: float = 1.0
+):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(1, max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except HTTPError as exc:
+                    status = getattr(exc.response, "status_code", None)
+                    if status == expected_status_code:
+                        wait_time = backoff_factor * (2 ** (attempt - 1))
+                        sync_sleep(wait_time)
+                    else:
+                        raise
+
+            return func(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 class BotController:
@@ -39,9 +55,11 @@ class BotController:
         coindesk_client: CoindeskClient,
         cryptopanic_client: CryptopanicClient,
         newsapi_client: NewsapiClient,
+        redis_client: Redis,
+        sentry_client: SentryClient,
         config: Config,
         token: str,
-        chat_id: str,
+        chat_ids: List[str],
     ) -> None:
         self.db_client = db_client
         self.binance_client = binance_client
@@ -49,21 +67,15 @@ class BotController:
         self.coindesk_client = coindesk_client
         self.cryptopanic_client = cryptopanic_client
         self.newsapi_client = newsapi_client
+        self.redis_client: Redis = redis_client
+        self.sentry_client = sentry_client
         self.config = config
 
         self.symbol_to_coingecko_id = {}
 
         self.bot_token = token
-        self.chat_id = int(chat_id)
-
-        self.known_currencies = set()
-
-        self.out_of_trend_currencies = set()
-
-        self.timezone = timezone(self.config.timezone_name)
-        self.launch_datetime = datetime.now(self.timezone)
-
-        self.stop_buying_flag = False
+        self.chat_ids = [int(chat_id) for chat_id in chat_ids]
+        self.stopped = False
 
         self.sentiment_intensity_analyzer = SentimentIntensityAnalyzer()
 
@@ -73,15 +85,15 @@ class BotController:
         # self.app.add_handler(CommandHandler("health", self.health))
         # self.app.add_handler(CommandHandler("get_config", self.get_config))
         # self.app.add_handler(CommandHandler("change_config", self.change_config))
-        # self.app.add_handler(CommandHandler("stop_buying", self.stop_trading))
-        # self.app.add_handler(CommandHandler("start_buying", self.start_trading))
-        # self.app.add_handler(CommandHandler("stop", self.stop))
+        self.app.add_handler(CommandHandler("stop", self.stop))
+        self.app.add_handler(CommandHandler("get_last_trending_currencies", self.get_last_trending_currencies))
 
         job_queue = self.app.job_queue
         job_queue.run_repeating(
             self.process_trending_currencies, interval=self.config.process_task_interval, first=1
         )
 
+    @retry_on_status_code(expected_status_code=429, backoff_factor=20)
     def get_all_coins(self):
         all_coins = self.coingecko_client._get_coins_list()
         self.symbol_to_coingecko_id = {
@@ -93,35 +105,20 @@ class BotController:
         # Run the bot until the user presses Ctrl-C
         self.app.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    # async def stop_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
-    #         return
+    async def stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id not in self.chat_ids:
+            return
 
-    #     self.stop_buying_flag = True
+        jobs =  context.job_queue.jobs()
+        for job in jobs:
+            job.schedule_removal()
 
-    # async def start_trading(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
-    #         return
-
-    #     self.stop_buying_flag = False
-
-    # async def stop(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
-    #         return
-
-    #     jobs =  context.job_queue.jobs()
-    #     for job in jobs:
-    #         job.schedule_removal()
-
-    #     await self._sell_or_record_to_table_rest_currencies(context)
-
-    #     await self._generate_incomes_report()
-
-    #     self.app.stop_running()
-    #     await update.message.reply_text('Bot stopped')
+        self.app.stop_running()
+        self.stopped = True
+        await update.message.reply_text('Bot is stopping')
 
     # async def health(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
+    #     if update.message.chat_id not in self.chat_ids:
     #         return
 
     #     jobs = context.job_queue.jobs()
@@ -142,14 +139,14 @@ class BotController:
     #     await update.message.reply_text(f'coin_market_cap_latest_request_datetime={coin_market_cap_latest_request_datetime}')
 
     # async def get_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
+    #     if update.message.chat_id not in self.chat_ids:
     #         return
 
     #     parameter_list = '\n'.join([f'{name}={getattr(self.config, name)}' for name in self.config.parameter_list])
     #     await update.message.reply_text(parameter_list)
 
     # async def change_config(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    #     if update.message.chat_id != self.chat_id:
+    #     if update.message.chat_id not in self.chat_ids:
     #         return
 
     #     if len(context.args) < 2:
@@ -168,29 +165,32 @@ class BotController:
     async def _get_coin_sentiment(
         self, coin_id: str, max_retries: int = 3, backoff_factor: float = 1.0
     ) -> float:
-        # for attempt in range(1, max_retries + 1):
-        #     try:
-        #         response = self.coingecko_client._get_coin_by_id(coin_id)
-        #         up_pct = response.get('sentiment_votes_up_percentage', 0) or 0
-        #         down_pct = response.get('sentiment_votes_down_percentage', 0) or 0
+        for attempt in range(1, max_retries + 1):
+            if self.stopped:
+                break
 
-        #         total = up_pct + down_pct
-        #         return (up_pct / total) if total else 0.5
-        #     except HTTPError as exc:
-        #         status = getattr(exc.response, 'status_code', None)
-        #         if status == 429:
-        #             retry_after = exc.response.headers.get('Retry-After')
-        #             wait_time = (
-        #                 int(retry_after) if retry_after and retry_after.isdigit() else 60
-        #             ) + backoff_factor * (attempt - 1)
-        #             logging.warning(f'[{coin_id}] 429, sleeping {wait_time}s (attempt {attempt})')
-        #             await sleep(wait_time)
-        #             continue
+            try:
+                response = self.coingecko_client._get_coin_by_id(coin_id)
+                up_pct = response.get('sentiment_votes_up_percentage', 0) or 0
+                down_pct = response.get('sentiment_votes_down_percentage', 0) or 0
 
-        #         logging.error(f'[{coin_id}] HTTP {status}: {exc}, returning 0.5')
-        #         return 0.5
+                total = up_pct + down_pct
+                return (up_pct / total) if total else 0.5
+            except HTTPError as exc:
+                status = getattr(exc.response, 'status_code', None)
+                if status == 429:
+                    retry_after = exc.response.headers.get('Retry-After')
+                    wait_time = (
+                        int(retry_after) if retry_after and retry_after.isdigit() else 60
+                    ) + backoff_factor * (attempt - 1)
+                    logging.warning(f'[{coin_id}] 429, sleeping {wait_time}s (attempt {attempt})')
+                    await async_sleep(wait_time)
+                    continue
 
-        # logging.error(f'[{coin_id}] Failed {max_retries} attempts, returning 0.5')
+                self.sentry_client.capture_exception(Exception(f'[{coin_id}] HTTP {status}: {exc}, returning 0.5'))
+                return 0.5
+
+        self.sentry_client.capture_exception(Exception(f'[{coin_id}] Failed {max_retries} attempts, returning 0.5'))
         return 0.5
 
     def _get_coindesk_articles(self, lang: str = "EN", limit: int = 10) -> list:
@@ -203,13 +203,17 @@ class BotController:
         response = self.cryptopanic_client._get_free_posts(limit)
         return response.get("results", [])
 
-    def get_news_sentiment(self, query: str) -> float:
+    def _get_news_sentiment(self, query: str) -> float:
         try:
             response = self.newsapi_client._get_everything(query)
             articles = response.get("articles", [])
         except HTTPError as exc:
             exception_body = exc.response.json()
-            logging.error(f'NewsAPI failed for {query}: {exception_body}')
+            if exception_body.get('code') != 'rateLimited':
+                self.sentry_client.capture_exception(
+                    Exception(f'NewsAPI failed for {query}: {exception_body}')
+                )
+
             return 0.5
 
         scores = [
@@ -229,9 +233,10 @@ class BotController:
                     available_currencies.append(currency)
             except HTTPError as exc:
                 exception_body = exc.response.json()
-                logging.error(
-                    f'Get Binance exchange_info failed for {currency["exchange_symbol"]}: {exception_body}'
-                )
+                if not 'Invalid symbol' in exception_body.get('msg'):
+                    self.sentry_client.capture_exception(
+                        Exception(f'Get Binance exchange_info failed for {currency["exchange_symbol"]}: {exception_body}')
+                    )
                 continue
 
         return available_currencies
@@ -298,14 +303,17 @@ class BotController:
     ):
         rows: List[dict[str, float | str]] = []
         for info in coin_info:
+            if self.stopped:
+                break
+
             symbol = info['symbol']
             name = info['name']
             coingecko_id = self.symbol_to_coingecko_id.get(symbol)
 
             comm_score = await self._get_coin_sentiment(coingecko_id)
-            await sleep(1)
+            await async_sleep(1)
 
-            news_score = self.get_news_sentiment(name)
+            news_score = self._get_news_sentiment(name)
 
             cp_posts = [
                 p for p in cryptopanic_posts
@@ -344,12 +352,24 @@ class BotController:
         )
         return df
 
-    async def _generate_massage(self, df):
-        results = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
+    async def _filter_records(self, df: pd.DataFrame, cached_records):
+        last_records = json.loads(cached_records)
+        last_records_symbol = last_records['symbol']
+        last_records_signal = last_records['signal']
+        prev_pairs = {(last_records_symbol[key], last_records_signal[key]) for key in last_records_symbol}
+
+        return df[df.apply(lambda row: (row['symbol'], row['signal']) not in prev_pairs, axis=1)]
+
+    async def _generate_massage(self, records):
         message_lines = [
-            f"{row['symbol']}" + ((12 - len(row['symbol'])) * ' ') + f"{row['composite']:.3f} ({row['signal']})"
-            for _, row in results.iterrows()
+            f"{symbol}" + ((12 - len(symbol)) * ' ') + f"{composite:.3f} ({signal})"
+            for symbol, composite, signal in zip(
+                records['symbol'].values(), records['composite'].values(), records['signal'].values()
+            )
         ]
+        if not message_lines:
+            return
+
         return '```\n' + "\n".join(message_lines) + '```'
 
     async def process_trending_currencies(self, context: ContextTypes.DEFAULT_TYPE):
@@ -366,13 +386,33 @@ class BotController:
 
             df = await self._calculate_signals(rows)
 
-            message = await self._generate_massage(df)
-            print(message)
-            await context.bot.send_message(self.chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
+            df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
+            new_records = df.to_dict()
 
-        except CmcException as ex:
-            print('CmcException ex', ex)
-            # self.sentry_client.capture_exception(ex)
+            cached_records = self.redis_client.get('last_trending_currencies')
+            if cached_records:
+                df = await self._filter_records(df, cached_records)
+
+            self.redis_client.set('last_trending_currencies', json.dumps(new_records))
+
+            message = await self._generate_massage(df.to_dict())
+            if cached_records and message:
+                for chat_id in self.chat_ids:
+                    await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
+
         except BaseException as ex:
-            print('BaseException ex', ex)
-            # self.sentry_client.capture_exception(ex)
+            self.sentry_client.capture_exception(ex)
+
+    async def get_last_trending_currencies(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if update.message.chat_id not in self.chat_ids:
+            return
+
+        cached_records = self.redis_client.get('last_trending_currencies')
+        if cached_records:
+            last_records = json.loads(cached_records)
+
+            message = await self._generate_massage(last_records)
+            if not message:
+                return
+
+            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)

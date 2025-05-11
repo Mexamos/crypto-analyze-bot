@@ -20,11 +20,18 @@ jobs:
                 docker system prune -af --volumes
 
                 git pull --rebase=interactive
-                export GF_SECURITY_ADMIN_USER=${{ secrets.GF_SECURITY_ADMIN_USER }}
-                export GF_SECURITY_ADMIN_PASSWORD=${{ secrets.GF_SECURITY_ADMIN_PASSWORD }}
+
+                echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+                echo "BOT_CHAT_IDS=${{ secrets.BOT_CHAT_IDS }}" >> .env
+                echo "COIN_MARKET_CAP_API_KEY=${{ secrets.COIN_MARKET_CAP_API_KEY }}" >> .env
+                echo "COINGECKO_API_KEY=${{ secrets.COINGECKO_API_KEY }}" >> .env
+                echo "SANTIMENT_API_KEY=${{ secrets.SANTIMENT_API_KEY }}" >> .env
+                echo "NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}" >> .env
+                echo "CRYPTOPANIC_AUTH_TOKEN=${{ secrets.CRYPTOPANIC_AUTH_TOKEN }}" >> .env
                 echo "BINANCE_API_KEY=${{ secrets.BINANCE_API_KEY }}" >> .env
                 echo "BINANCE_SECRET_KEY=${{ secrets.BINANCE_SECRET_KEY }}" >> .env
                 echo "REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}" >> .env
                 echo "SENTRY_DSN=${{ secrets.SENTRY_DSN }}" >> .env
+
                 docker-compose up --build --force-recreate -d
                 ENDSSH

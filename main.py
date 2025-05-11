@@ -1,24 +1,22 @@
 import os
 
 from dotenv import load_dotenv
+from redis import Redis
 
 from app.bot_controller import BotController
 from app.database.client import DatabaseClient
 from app.crypto.coindesk_client import CoindeskClient
 from app.crypto.coingecko_client import CoingeckoClient
-from app.crypto.coinmarketcap_client import CoinmarketcapClient
 from app.crypto.cryptopanic_client import CryptopanicClient
 from app.crypto.newsapi_client import NewsapiClient
 from app.crypto.binance_client import BinanceClient
-from app.analytics.chart import ChartController
 from app.config import Config
-from app.analytics.google_sheets_client import GoogleSheetsClient
 from app.monitoring.sentry import SentryClient
 
 load_dotenv()
 
 TOKEN = os.getenv('BOT_TOKEN')
-BOT_CHAT_ID = os.getenv('BOT_CHAT_ID')
+BOT_CHAT_IDS = os.getenv('BOT_CHAT_IDS', '').split(',')
 
 COIN_MARKET_CAP_API_KEY = os.getenv('COIN_MARKET_CAP_API_KEY')
 COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY')
@@ -29,16 +27,14 @@ CRYPTOPANIC_AUTH_TOKEN = os.getenv('CRYPTOPANIC_AUTH_TOKEN')
 BINANCE_API_KEY = os.getenv('BINANCE_API_KEY')
 BINANCE_SECRET_KEY = os.getenv('BINANCE_SECRET_KEY')
 
-CREDENTIALS_FILE_PATH = os.getenv('CREDENTIALS_FILE_PATH')
-SPREADSHEET_ID = os.getenv('SPREADSHEET_ID')
-
 SENTRY_DSN = os.getenv('SENTRY_DSN')
 
-# TODO Add for requests raises exceptions !!!!!!!!!!
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = os.getenv('REDIS_PORT', 6379)
+REDIS_DB = os.getenv('REDIS_DB', 0)
+REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
 
-# TODO urls
-# /v2/cryptocurrency/quotes/historical
-# /v1/cryptocurrency/listings/historical
+# TODO Add for requests raises exceptions !!!!!!!!!!
 
 # TODO порешать ошибки из сентри
 
@@ -51,18 +47,15 @@ SENTRY_DSN = os.getenv('SENTRY_DSN')
 def main():
     config = Config()
     db_client = DatabaseClient()
+    redis_client = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, password=REDIS_PASSWORD)
 
-    # chart_controller = ChartController(db_client, config)
-    # google_sheets_client = GoogleSheetsClient(CREDENTIALS_FILE_PATH, SPREADSHEET_ID)
-
-    # cmc_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY, config)
     coindesk_client = CoindeskClient('https://data-api.coindesk.com')
     coingecko_client = CoingeckoClient('https://api.coingecko.com', COINGECKO_API_KEY, config)
     cryptopanic_client = CryptopanicClient('https://cryptopanic.com', CRYPTOPANIC_AUTH_TOKEN)
     newsapi_client = NewsapiClient('https://newsapi.org', NEWS_API_KEY)
     binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
 
-    # sentry_client = SentryClient(SENTRY_DSN, config)
+    sentry_client = SentryClient(SENTRY_DSN, config)
 
     telegram_controller = BotController(
         db_client,
@@ -71,9 +64,11 @@ def main():
         coindesk_client,
         cryptopanic_client,
         newsapi_client,
+        redis_client,
+        sentry_client,
         config,
         TOKEN,
-        BOT_CHAT_ID,
+        BOT_CHAT_IDS,
     )
     telegram_controller.init_bot()
     telegram_controller.get_all_coins()
