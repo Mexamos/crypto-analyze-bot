@@ -23,7 +23,7 @@ class CryptopanicClient:
             raise CryptopanicException() from ex
 
     def _get_free_posts(self, limit: int = 50):
-        url = self.host + '/api/free/v1/posts/'
+        url = self.host + '/api/v1/posts/'
         params = {
             'auth_token': self.auth_token,
             'filter': 'hot',

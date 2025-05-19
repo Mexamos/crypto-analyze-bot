@@ -13,11 +13,11 @@ class ConfigParameterNotFound(ConfigException):
 class Config:
 
     def __init__(self) -> None:
-        self.config = configparser.ConfigParser()
+        self.config = configparser.RawConfigParser()
         self.config.read('./app/config.ini')
 
         self.parameter_list = [
-            'process_task_interval',
+            'analyze_task_interval',
             'percentage_difference_for_sale',
             'value_difference_for_sale',
             'currency_conversion',
@@ -29,14 +29,24 @@ class Config:
             'sentry_profiles_sample_rate',
         ]
 
-        self.process_task_interval = self.config.getint(
-            'trading_frequency', 'process_task_interval', fallback=20
+        self.analyze_task_interval = self.config.getint(
+            'trading_frequency', 'analyze_task_interval', fallback=1800
         )
         self.percentage_difference_for_sale = self.config.getfloat(
             'trading_frequency', 'percentage_difference_for_sale', fallback=0.1
         )
         self.value_difference_for_sale = self.config.getint(
             'trading_frequency', 'value_difference_for_sale', fallback=100
+        )
+
+        self.santimentapi_model_file_path = self.config.get(
+            'santimentapi_model', 'model_file_path', fallback='./santimentapi_model.pkl'
+        )
+        self.santimentapi_scaler_file_path = self.config.get(
+            'santimentapi_model', 'scaler_file_path', fallback='./santimentapi_scaler.pkl'
+        )
+        self.santimentapi_date_format = self.config.get(
+            'santimentapi_model', 'date_format', fallback='%Y-%m-%d', raw=True
         )
 
         self.currency_conversion = self.config.get(
@@ -58,6 +68,9 @@ class Config:
 
         self.timezone_name = self.config.get(
             'common', 'timezone_name', fallback='UTC'
+        )
+        self.common_date_format = self.config.get(
+            'common', 'date_format', fallback='%Y-%m-%d', raw=True
         )
 
         self.round_plot_numbers_to = self.config.getint(

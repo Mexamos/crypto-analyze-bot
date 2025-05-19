@@ -135,3 +135,6 @@ dmypy.json
 # App specific
 token.json
 credentials.json
+
+# scikit-learn files
+*.pkl
