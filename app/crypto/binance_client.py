@@ -31,7 +31,7 @@ class BinanceClient:
         }
         return self._call(url, params)
 
-    def kline_data(
+    def klines(
         self,
         symbol: str,
         interval: str,

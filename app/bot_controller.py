@@ -2,7 +2,7 @@ import logging
 import json
 from asyncio import sleep as async_sleep
 from datetime import datetime, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 from functools import wraps
 from time import sleep as sync_sleep
 
@@ -14,6 +14,8 @@ from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from redis import Redis
+from prophet import Prophet
+import numpy as np
 
 from app.cache.client import CacheClient
 from app.database.client import DatabaseClient
@@ -326,9 +328,35 @@ class BotController:
         coin_info = await self._filter_conversion_currency(coin_info)
         return await self._filter_currencies_by_binance(coin_info)
 
-    async def _get_metrics_per_currency(
-        self, coin_info, cryptopanic_posts
-    ):
+    async def _get_historical_klines(self, symbol: str, interval: str = '1h', limit: int = 100) -> pd.DataFrame:
+        """Fetch historical klines (OHLCV) data from Binance"""
+        try:
+            klines = self.binance_client.klines(
+                symbol=symbol,
+                interval=interval,
+                limit=limit
+            )
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(klines, columns=[
+                'Open Time', 'Open', 'High', 'Low', 'Close', 'Volume',
+                'Close Time', 'Quote Asset Volume', 'Number of Trades',
+                'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'
+            ])
+            
+            # Convert types
+            df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
+            df['Close Time'] = pd.to_datetime(df['Close Time'], unit='ms')
+            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            return df
+            
+        except Exception as e:
+            self.sentry_client.capture_exception(e)
+            return pd.DataFrame()
+
+    async def _get_metrics_per_currency(self, coin_info, cryptopanic_posts):
         rows: List[dict[str, float | str]] = []
         for info in coin_info:
             if self.stopped:
@@ -336,8 +364,12 @@ class BotController:
 
             symbol = info['symbol']
             name = info['name']
+            exchange_symbol = info['exchange_symbol']
             coingecko_id = self.symbol_to_coingecko_id.get(symbol)
 
+            # Get historical OHLCV data
+            historical_data = await self._get_historical_klines(exchange_symbol)
+            
             comm_score = await self._get_coin_sentiment(coingecko_id)
             await async_sleep(1)
 
@@ -352,32 +384,250 @@ class BotController:
                 for p in cp_posts
             )
 
-            rows.append({
+            row_data = {
                 "symbol": symbol,
                 "comm_score": comm_score,
                 "news_score": news_score,
                 "cryptopanic_score": cp_score,
-            })
+            }
+
+            # Add OHLCV data if available
+            if not historical_data.empty:
+                row_data.update({
+                    "Open Time": historical_data['Open Time'].iloc[-1],
+                    "Open": historical_data['Open'].iloc[-1],
+                    "High": historical_data['High'].iloc[-1],
+                    "Low": historical_data['Low'].iloc[-1],
+                    "Close": historical_data['Close'].iloc[-1],
+                    "Volume": historical_data['Volume'].iloc[-1],
+                    "historical_data": historical_data
+                })
+
+            rows.append(row_data)
 
         return rows
+
+    def _calculate_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate technical indicators for trading decisions"""
+        # RSI
+        delta = df['Close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['RSI'] = 100 - (100 / (1 + rs))
+
+        # MACD
+        exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+        exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+        df['MACD'] = exp1 - exp2
+        df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+        df['MACD_Histogram'] = df['MACD'] - df['Signal_Line']
+
+        # Bollinger Bands
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        df['BB_Upper'] = df['SMA_20'] + (df['Close'].rolling(window=20).std() * 2)
+        df['BB_Lower'] = df['SMA_20'] - (df['Close'].rolling(window=20).std() * 2)
+
+        # Volume Analysis
+        df['Volume_SMA'] = df['Volume'].rolling(window=20).mean()
+        df['Volume_Ratio'] = df['Volume'] / df['Volume_SMA']
+
+        return df
+
+    def _generate_technical_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Generate trading signals based on technical indicators"""
+        signals = pd.DataFrame(index=df.index)
+        
+        # RSI signals
+        signals['RSI_Signal'] = 0
+        signals.loc[df['RSI'] < 30, 'RSI_Signal'] = 1  # Oversold - Buy
+        signals.loc[df['RSI'] > 70, 'RSI_Signal'] = -1  # Overbought - Sell
+
+        # MACD signals
+        signals['MACD_Signal'] = 0
+        signals.loc[df['MACD'] > df['Signal_Line'], 'MACD_Signal'] = 1
+        signals.loc[df['MACD'] < df['Signal_Line'], 'MACD_Signal'] = -1
+
+        # Bollinger Bands signals
+        signals['BB_Signal'] = 0
+        signals.loc[df['Close'] < df['BB_Lower'], 'BB_Signal'] = 1  # Price below lower band - Buy
+        signals.loc[df['Close'] > df['BB_Upper'], 'BB_Signal'] = -1  # Price above upper band - Sell
+
+        # Volume signals
+        signals['Volume_Signal'] = 0
+        signals.loc[df['Volume_Ratio'] > 1.5, 'Volume_Signal'] = 1  # High volume - potential trend
+        signals.loc[df['Volume_Ratio'] < 0.5, 'Volume_Signal'] = -1  # Low volume - potential reversal
+
+        # Combine signals
+        signals['Technical_Score'] = (
+            signals['RSI_Signal'] * 0.3 +
+            signals['MACD_Signal'] * 0.3 +
+            signals['BB_Signal'] * 0.2 +
+            signals['Volume_Signal'] * 0.2
+        )
+
+        return signals
+
+    def _prepare_prophet_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Prepare data for Prophet model"""
+        prophet_df = df[['Open Time', 'Close']].copy()
+        prophet_df.columns = ['ds', 'y']
+        return prophet_df
+
+    def _train_prophet_model(self, df: pd.DataFrame) -> Prophet:
+        """Train Prophet model for price prediction"""
+        prophet_df = self._prepare_prophet_data(df)
+        
+        model = Prophet(
+            daily_seasonality=True,
+            weekly_seasonality=True,
+            yearly_seasonality=True,
+            changepoint_prior_scale=0.05,
+            # Disable Stan processing completely
+            growth='linear',
+            n_changepoints=0,  # No changepoints
+            changepoint_range=0,  # No changepoint range
+            mcmc_samples=0,  # No MCMC sampling
+            stan_backend='CMDSTANPY'  # Explicitly set backend
+        )
+        
+        # Disable Stan logging
+        model.stan_backend.logger.setLevel(logging.ERROR)
+        
+        model.fit(prophet_df)
+        return model
+
+    def _get_price_prediction(self, model: Prophet, periods: int = 24) -> pd.DataFrame:
+        """Get price predictions from Prophet model"""
+        future = model.make_future_dataframe(periods=periods, freq='h')  # Changed from 'H' to 'h'
+        forecast = model.predict(future)
+        return forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
+
+    def _calculate_position_size(self, df: pd.DataFrame, available_balance: float) -> float:
+        """Calculate position size based on volatility and risk parameters"""
+        # Calculate ATR for volatility
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        atr = true_range.rolling(14).mean().iloc[-1]
+        
+        # Calculate volatility-based position size
+        risk_per_trade = 0.02  # 2% risk per trade
+        stop_loss_atr_multiplier = 2  # Stop loss at 2 ATR
+        
+        # Calculate position size
+        risk_amount = available_balance * risk_per_trade
+        stop_loss_distance = atr * stop_loss_atr_multiplier
+        position_size = risk_amount / stop_loss_distance
+        
+        # Limit position size to 20% of available balance
+        max_position = available_balance * 0.2
+        position_size = min(position_size, max_position)
+        
+        return position_size
+
+    def _calculate_trailing_stop(self, df: pd.DataFrame, entry_price: float) -> float:
+        """Calculate trailing stop loss based on ATR and entry price"""
+        high_low = df['High'] - df['Low']
+        high_close = np.abs(df['High'] - df['Close'].shift())
+        low_close = np.abs(df['Low'] - df['Close'].shift())
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = np.max(ranges, axis=1)
+        atr = true_range.rolling(14).mean().iloc[-1]
+        
+        # Calculate highest price since entry
+        highest_price = max(entry_price, df['High'].iloc[-1])
+        
+        # Set trailing stop at 2 ATR below the highest price since entry
+        # This ensures we don't set the stop loss below our entry price
+        trailing_stop = max(
+            entry_price,  # Don't go below entry price
+            highest_price - (2 * atr)  # Standard trailing stop calculation
+        )
+        
+        return trailing_stop
 
     async def _calculate_signals(self, rows) -> pd.DataFrame:
         # Build DataFrame and normalize
         df = pd.DataFrame(rows)
+        
+        # Calculate technical indicators if we have historical data
+        if 'historical_data' in df.columns:
+            # Process each row's historical data
+            for idx, row in df.iterrows():
+                if isinstance(row['historical_data'], pd.DataFrame):
+                    # Calculate technical indicators for this symbol's historical data
+                    symbol_data = self._calculate_technical_indicators(row['historical_data'])
+                    technical_signals = self._generate_technical_signals(symbol_data)
+                    
+                    # Get the last values
+                    df.at[idx, 'technical_score'] = technical_signals['Technical_Score'].iloc[-1]
+                    
+                    # Add Prophet predictions
+                    try:
+                        prophet_model = self._train_prophet_model(symbol_data)
+                        forecast = self._get_price_prediction(prophet_model)
+                        
+                        # Calculate prediction confidence
+                        last_price = symbol_data['Close'].iloc[-1]
+                        next_prediction = forecast['yhat'].iloc[-1]
+                        prediction_range = forecast['yhat_upper'].iloc[-1] - forecast['yhat_lower'].iloc[-1]
+                        
+                        # Normalize prediction confidence
+                        df.at[idx, 'prediction_score'] = 1 - (prediction_range / last_price)
+                        
+                        # Add trend prediction
+                        price_change = (next_prediction - last_price) / last_price
+                        df.at[idx, 'trend_prediction'] = np.clip(price_change * 5, -1, 1)
+                        
+                        # Calculate position size and risk metrics
+                        available_balance = float(self.config.total_available_amount)
+                        df.at[idx, 'position_size'] = self._calculate_position_size(symbol_data, available_balance)
+                        df.at[idx, 'trailing_stop'] = self._calculate_trailing_stop(symbol_data, last_price)
+                        
+                    except Exception as e:
+                        self.sentry_client.capture_exception(e)
+                        df.at[idx, 'prediction_score'] = 0
+                        df.at[idx, 'trend_prediction'] = 0
+                        df.at[idx, 'position_size'] = 0
+                        df.at[idx, 'trailing_stop'] = 0
+        else:
+            df['technical_score'] = 0
+            df['prediction_score'] = 0
+            df['trend_prediction'] = 0
+            df['position_size'] = 0
+            df['trailing_stop'] = 0
+
+        # Normalize sentiment scores
         for col in ["comm_score", "news_score", "cryptopanic_score"]:
             mn, mx = df[col].min(), df[col].max()
             df[f"{col}_n"] = (df[col] - mn) / (mx - mn) if mx > mn else 0.5
 
-        # Compute composite score (renormalized weights) and signal
-        # Original weights: 0.5, 0.2, 0.2 -> sum=0.9; normalized -> 0.556, 0.222, 0.222
+        # Compute composite score with all factors
         df["composite"] = (
-            0.556 * df["comm_score_n"] +
-            0.222 * df["news_score_n"] +
-            0.222 * df["cryptopanic_score_n"]
+            0.3 * df["comm_score_n"] +
+            0.15 * df["news_score_n"] +
+            0.15 * df["cryptopanic_score_n"] +
+            0.2 * df["technical_score"] +
+            0.1 * df["prediction_score"] +
+            0.1 * df["trend_prediction"]
         )
-        df["signal"] = df["composite"].apply(
-            lambda x: "BUY" if x > 0.7 else ("SELL" if x < 0.3 else "HOLD")
-        )
+
+        # Generate signals with dynamic thresholds and risk management
+        def generate_signal(row):
+            if row['composite'] > 0.6 and row['position_size'] > 0:
+                return "BUY"
+            elif row['composite'] < 0.3 or (row['Close'] < row['trailing_stop'] if 'Close' in row else False):
+                return "SELL"
+            return "HOLD"
+            
+        df["signal"] = df.apply(generate_signal, axis=1)
+        
+        # Clean up the DataFrame before returning
+        df = df.drop('historical_data', axis=1, errors='ignore')
+        
         return df
 
     async def _filter_records(self, df: pd.DataFrame, cached_records):
@@ -388,15 +638,24 @@ class BotController:
 
         return df[df.apply(lambda row: (row['symbol'], row['signal']) not in prev_pairs, axis=1)]
 
-    async def _generate_massage(self, records):
-        message_lines = [
-            f"{symbol}" + ((12 - len(symbol)) * ' ') + f"{composite:.3f} ({signal})"
+    async def _generate_message(self, records, signal_type: Optional[str] = None):
+        signals = [
+            (symbol, composite, signal)
             for symbol, composite, signal in zip(
-                records['symbol'].values(), records['composite'].values(), records['signal'].values()
+                records['symbol'].values(),
+                records['composite'].values(),
+                records['signal'].values()
             )
+            if signal_type and signal == signal_type or not signal_type
         ]
-        if not message_lines:
-            return
+        
+        if not signals:
+            return None
+
+        message_lines = [
+            f"{symbol}" + ((12 - len(symbol)) * ' ') + f"{composite:.3f} {signal}"
+            for symbol, composite, signal in signals
+        ]
 
         return '```\n' + "\n".join(message_lines) + '```'
 
@@ -424,8 +683,8 @@ class BotController:
 
             self.cache_client.set('last_trending_currencies', json.dumps(new_records))
 
-            message = await self._generate_massage(df.to_dict())
-            if cached_records and message:
+            message = await self._generate_message(df.to_dict(), signal_type="BUY")
+            if message:
                 for chat_id in self.chat_ids:
                     await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
@@ -440,14 +699,14 @@ class BotController:
         if cached_records:
             last_records = json.loads(cached_records)
 
-            message = await self._generate_massage(last_records)
+            message = await self._generate_message(last_records)
             if not message:
                 return
 
             await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
     async def scikit_learn_predict(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if update.message.chat_id not in self.chat_ids:
+        if not update.message or update.message.chat_id not in self.chat_ids:
             return
 
         if len(context.args) < 1:
