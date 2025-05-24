@@ -1,5 +1,6 @@
 import logging
 import json
+import pickle
 from asyncio import sleep as async_sleep
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
@@ -13,8 +14,8 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-from redis import Redis
 from prophet import Prophet
+from sentry_sdk import push_scope
 import numpy as np
 
 from app.cache.client import CacheClient
@@ -28,6 +29,9 @@ from app.crypto.santimentapi_client import SantimentApiClient
 from app.crypto.santimentapi_model import ModelTrainingFacade, ModelPredictionFacade
 from app.config import Config
 from app.monitoring.sentry import SentryClient
+
+logging.getLogger("prophet").setLevel(logging.WARNING)
+logging.getLogger("cmdstanpy").disabled=True
 
 
 def retry_on_status_code(
@@ -81,7 +85,7 @@ class BotController:
         self.model_training_facade = model_training_facade
         self.model_prediction_facade = model_prediction_facade
 
-        self.cache_client: Redis = cache_client
+        self.cache_client: CacheClient = cache_client
         self.sentry_client = sentry_client
         self.config = config
 
@@ -187,7 +191,6 @@ class BotController:
                     wait_time = (
                         int(retry_after) if retry_after and retry_after.isdigit() else 60
                     ) + backoff_factor * (attempt - 1)
-                    logging.warning(f'[{coin_id}] 429, sleeping {wait_time}s (attempt {attempt})')
                     await async_sleep(wait_time)
                     continue
 
@@ -371,7 +374,6 @@ class BotController:
             historical_data = await self._get_historical_klines(exchange_symbol)
             
             comm_score = await self._get_coin_sentiment(coingecko_id)
-            await async_sleep(1)
 
             news_score = self._get_news_sentiment(name)
 
@@ -474,8 +476,16 @@ class BotController:
         prophet_df.columns = ['ds', 'y']
         return prophet_df
 
-    def _train_prophet_model(self, df: pd.DataFrame) -> Prophet:
-        """Train Prophet model for price prediction"""
+    def _train_prophet_model(self, df: pd.DataFrame, symbol: str) -> Prophet:
+        cache_key = f"prophet_model_{symbol}"
+        cached_model = self.cache_client.get(cache_key)
+        if cached_model:
+            try:
+                model = pickle.loads(cached_model)
+                return model
+            except Exception as e:
+                self.sentry_client.capture_exception(e)
+        
         prophet_df = self._prepare_prophet_data(df)
         
         model = Prophet(
@@ -483,18 +493,28 @@ class BotController:
             weekly_seasonality=True,
             yearly_seasonality=True,
             changepoint_prior_scale=0.05,
-            # Disable Stan processing completely
             growth='linear',
-            n_changepoints=0,  # No changepoints
-            changepoint_range=0,  # No changepoint range
-            mcmc_samples=0,  # No MCMC sampling
-            stan_backend='CMDSTANPY'  # Explicitly set backend
+            n_changepoints=5,  # Allow some changepoints for better trend detection
+            changepoint_range=0.8,  # Use 80% of the data for changepoints
+            mcmc_samples=0,
+            stan_backend='CMDSTANPY',
+            interval_width=0.95,  # 95% prediction intervals
+            seasonality_mode='multiplicative'  # Better for financial data
         )
-        
-        # Disable Stan logging
-        model.stan_backend.logger.setLevel(logging.ERROR)
-        
+        # Add custom seasonality if needed
+        model.add_seasonality(
+            name='hourly',
+            period=24,
+            fourier_order=5
+        )
         model.fit(prophet_df)
+
+        try:
+            serialized_model = pickle.dumps(model)
+            self.cache_client.set(cache_key, serialized_model, ex=3600)  # 3600 seconds = 1 hour
+        except Exception as e:
+            self.sentry_client.capture_exception(e)
+
         return model
 
     def _get_price_prediction(self, model: Prophet, periods: int = 24) -> pd.DataFrame:
@@ -567,7 +587,7 @@ class BotController:
                     
                     # Add Prophet predictions
                     try:
-                        prophet_model = self._train_prophet_model(symbol_data)
+                        prophet_model = self._train_prophet_model(symbol_data, row['symbol'])
                         forecast = self._get_price_prediction(prophet_model)
                         
                         # Calculate prediction confidence
@@ -688,6 +708,11 @@ class BotController:
                 for chat_id in self.chat_ids:
                     await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
+        except HTTPError as ex:
+            exception_body = ex.response.json()
+            with push_scope() as scope:
+                scope.set_context("exception_body", exception_body)
+                self.sentry_client.capture_exception(ex)
         except Exception as ex:
             self.sentry_client.capture_exception(ex)
 
