@@ -5,7 +5,7 @@ from typing import List, Optional
 from sqlalchemy import create_engine, select, delete, text, func
 from sqlalchemy.orm import Session
 
-from app.database.models import Base, CurrencyPrice, Income
+from app.database.models import Base, CurrencyPrice, Income, CryptocurrencyPurchase
 
 
 class DatabaseClient:
@@ -118,4 +118,25 @@ class DatabaseClient:
                 date_time=date_time,
             )
             session.add(income)
+            session.commit()
+
+    def find_cryptocurrency_purchase_by_symbol(self, symbol: str) -> Optional[CryptocurrencyPurchase]:
+        with Session(self.engine) as session:
+            stmt = select(CryptocurrencyPurchase).where(CryptocurrencyPurchase.symbol == symbol)
+            result = session.scalars(stmt).first()
+            session.close()
+            return result
+
+    def create_cryptocurrency_purchase(
+        self, symbol: str, name: str, price: Decimal, date: datetime, coingecko_id: Optional[str] = None
+    ):
+        with Session(self.engine) as session:
+            purchase = CryptocurrencyPurchase(
+                symbol=symbol,
+                name=name,
+                price=price,
+                date=date,
+                coingecko_id=coingecko_id
+            )
+            session.add(purchase)
             session.commit()

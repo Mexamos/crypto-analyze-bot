@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, String, DECIMAL
+from sqlalchemy import DateTime, String, DECIMAL, Column, Integer, Numeric
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -27,3 +27,14 @@ class Income(Base):
     symbol: Mapped[str] = mapped_column(String(10))
     value: Mapped[Decimal] = mapped_column(DECIMAL(50, 30))
     date_time: Mapped[datetime] = mapped_column(DateTime)
+
+
+class CryptocurrencyPurchase(Base):
+    __tablename__ = 'cryptocurrency_purchase'
+
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, nullable=False)
+    name = Column(String, nullable=False)
+    coingecko_id = Column(String, nullable=True)
+    price = Column(Numeric, nullable=False)
+    date = Column(DateTime, nullable=False)

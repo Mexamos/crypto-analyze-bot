@@ -6,13 +6,14 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from functools import wraps
 from time import sleep as sync_sleep
+from decimal import Decimal
 
 import pandas as pd
 from pytz import timezone
 from requests.exceptions import HTTPError
-from telegram import Update
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, CallbackQueryHandler
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from prophet import Prophet
 from sentry_sdk import push_scope
@@ -32,6 +33,8 @@ from app.monitoring.sentry import SentryClient
 
 logging.getLogger("prophet").setLevel(logging.WARNING)
 logging.getLogger("cmdstanpy").disabled=True
+
+SIMULATE_PURCHASE_CHOOSE_CURRENCY = 0
 
 
 def retry_on_status_code(
@@ -108,6 +111,17 @@ class BotController:
         self.app.add_handler(CommandHandler("get_last_trending_currencies", self.get_last_trending_currencies))
         self.app.add_handler(CommandHandler("scikit_learn_predict", self.scikit_learn_predict))
         self.app.add_handler(CommandHandler("stop", self.stop))
+
+        # conv_handler = ConversationHandler(
+        #     entry_points=[CommandHandler("simulate_purchase", self.simulate_purchase_start)],
+        #     states={
+        #         SIMULATE_PURCHASE_CHOOSE_CURRENCY: [
+        #             CallbackQueryHandler(self.simulate_purchase_choice)
+        #         ],
+        #     },
+        #     fallbacks=[],
+        # )
+        # self.app.add_handler(conv_handler)
 
         job_queue = self.app.job_queue
         job_queue.run_repeating(
@@ -254,7 +268,15 @@ class BotController:
                 if exchange_info:
                     available_currencies.append(currency)
             except HTTPError as exc:
-                exception_body = exc.response.json()
+                try:
+                    exception_body = exc.response.json()
+                except ValueError:
+                    raw = exc.response.text
+                    self.sentry_client.capture_exception(
+                        Exception(f'Binance error for {currency["exchange_symbol"]}: non-JSON response: {raw!r}')
+                    )
+                    continue
+
                 if not 'Invalid symbol' in exception_body.get('msg'):
                     self.sentry_client.capture_exception(
                         Exception(f'Get Binance exchange_info failed for {currency["exchange_symbol"]}: {exception_body}')
@@ -330,6 +352,24 @@ class BotController:
 
         coin_info = await self._filter_conversion_currency(coin_info)
         return await self._filter_currencies_by_binance(coin_info)
+
+    async def _filter_new_records(self, records: dict[str, dict[str, str]]) -> List[dict[str, str]]:
+        records = [f"{record['symbol']}:{record['exchange_symbol']}:{record['name']}" for record in records]
+        cached_records = self.cache_client.get('last_trending_currencies')
+        new_records = []
+        if cached_records:
+            last_records = json.loads(cached_records)
+            for record in records:
+                if record not in last_records:
+                    new_records.append({
+                        'symbol': record[0],
+                        'exchange_symbol': record[1],
+                        'name': record[2]
+                    })
+
+        self.cache_client.set('last_trending_currencies', json.dumps(records))
+
+        return new_records
 
     async def _get_historical_klines(self, symbol: str, interval: str = '1h', limit: int = 100) -> pd.DataFrame:
         """Fetch historical klines (OHLCV) data from Binance"""
@@ -650,8 +690,7 @@ class BotController:
         
         return df
 
-    async def _filter_records(self, df: pd.DataFrame, cached_records):
-        last_records = json.loads(cached_records)
+    async def _filter_records(self, df: pd.DataFrame, last_records):
         last_records_symbol = last_records['symbol']
         last_records_signal = last_records['signal']
         prev_pairs = {(last_records_symbol[key], last_records_signal[key]) for key in last_records_symbol}
@@ -689,19 +728,15 @@ class BotController:
             coin_info = await self._forming_currencies_list(
                 trending_coins, coindesk_articles, cryptopanic_posts, trend_words
             )
+            new_coin_info = await self._filter_new_records(coin_info)
+            if not new_coin_info:
+                return
 
-            rows = await self._get_metrics_per_currency(coin_info, cryptopanic_posts)
+            rows = await self._get_metrics_per_currency(new_coin_info, cryptopanic_posts)
 
             df = await self._calculate_signals(rows)
 
             df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
-            new_records = df.to_dict()
-
-            cached_records = self.cache_client.get('last_trending_currencies')
-            if cached_records:
-                df = await self._filter_records(df, cached_records)
-
-            self.cache_client.set('last_trending_currencies', json.dumps(new_records))
 
             message = await self._generate_message(df.to_dict(), signal_type="BUY")
             if message:
@@ -757,3 +792,182 @@ class BotController:
         except Exception as ex:
             self.sentry_client.capture_exception(ex)
             await update.message.reply_text(f'Error in scikit_learn_predict: {ex}')
+
+    async def _get_historical_price(self, symbol: str, purchase_date: datetime) -> Optional[Decimal]:
+        """Get historical price for a symbol at a specific date"""
+        try:
+            # Convert datetime to timestamp for Binance API
+            timestamp = int(purchase_date.timestamp() * 1000)
+            
+            # Get klines data for the specific time
+            klines = self.binance_client.klines(
+                symbol=symbol,
+                interval='1h',
+                start_time=timestamp,
+                end_time=timestamp + 3600000,  # Add 1 hour to ensure we get data
+                limit=1
+            )
+            
+            if klines and len(klines) > 0:
+                # Return the closing price
+                return Decimal(str(klines[0][4]))
+            return None
+        except Exception as e:
+            self.sentry_client.capture_exception(e)
+            return None
+
+    async def _get_current_price(self, symbol: str) -> Optional[Decimal]:
+        """Get current price for a symbol"""
+        try:
+            # Get the latest kline
+            klines = self.binance_client.klines(
+                symbol=symbol,
+                interval='1h',
+                limit=1
+            )
+            
+            if klines and len(klines) > 0:
+                return Decimal(str(klines[0][4]))
+            return None
+        except Exception as e:
+            self.sentry_client.capture_exception(e)
+            return None
+
+    async def _find_matching_symbols(self, symbol: str) -> List[str]:
+        """Find all matching symbols in Binance"""
+        try:
+            exchange_info = self.binance_client.exchange_info(symbol)
+            if exchange_info and 'symbols' in exchange_info:
+                return [s['symbol'] for s in exchange_info['symbols'] if s['symbol'].startswith(symbol)]
+            return []
+        except Exception as e:
+            self.sentry_client.capture_exception(e)
+            return []
+
+    # async def simulate_purchase_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    #     if update.message.chat_id not in self.chat_ids:
+    #         return ConversationHandler.END
+
+    #     options = ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+    #     keyboard = [
+    #         [InlineKeyboardButton(opt, callback_data=opt)]
+    #         for opt in options
+    #     ]
+    #     reply_markup = InlineKeyboardMarkup(keyboard)
+
+    #     await update.message.reply_text(
+    #         "Пожалуйста, выберите символ для симуляции покупки:",
+    #         reply_markup=reply_markup
+    #     )
+    #     return SIMULATE_PURCHASE_CHOOSE_CURRENCY
+
+    # async def simulate_purchase_choice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    #     query = update.callback_query
+    #     await query.answer()
+
+    #     chosen_symbol = query.data
+    #     print(f"Chosen symbol: {chosen_symbol}, type: {type(chosen_symbol)}")
+    #     # Save the chosen symbol in user_data
+    #     context.user_data['simulate_symbol'] = chosen_symbol
+
+    #     # Remove the inline keyboard
+    #     await query.edit_message_reply_markup(reply_markup=None)
+
+    #     # # Тут можно повторить всё, что было в оригинальном simulate_purchase,
+
+    #     return ConversationHandler.END
+
+
+
+    # async def simulate_purchase(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    #     if update.message.chat_id not in self.chat_ids:
+    #         return
+
+    #     if not context.args:
+    #         await update.message.reply_text(
+    #             'Please provide a cryptocurrency symbol (e.g., /simulate_purchase BTC)'
+    #         )
+    #         return
+
+    #     symbol = context.args[0].upper()
+    #     purchase_date = None
+    #     if len(context.args) > 1:
+    #         try:
+    #             try:
+    #                 purchase_date = datetime.strptime(context.args[1], '%Y-%m-%d %H:%M')
+    #             except ValueError:
+    #                 purchase_date = datetime.strptime(context.args[1], self.date_format)
+    #         except ValueError:
+    #             await update.message.reply_text(
+    #                 'Invalid date format. Please use YYYY-MM-DD HH:MM or YYYY-MM-DD'
+    #             )
+    #             return
+
+    #     matching_symbols = await self._find_matching_symbols(symbol)
+        
+    #     if not matching_symbols:
+    #         await update.message.reply_text(f'No matching symbols found for {symbol}')
+    #         return
+        
+    #     if len(matching_symbols) > 1:
+    #         symbols_list = '\n'.join(matching_symbols)
+    #         await update.message.reply_text(
+    #             f'Multiple matching symbols found. Please choose one:\n{symbols_list}'
+    #         )
+    #         return
+
+    #     # Get the exact symbol
+    #     exact_symbol = matching_symbols[0]
+
+    #     # Check if we already have a purchase record
+    #     existing_purchase = self.db_client.find_cryptocurrency_purchase_by_symbol(exact_symbol)
+    #     if existing_purchase:
+    #         await update.message.reply_text(
+    #             f'You have already purchased {exact_symbol} ({existing_purchase.name}) '
+    #             f'at {existing_purchase.date.strftime("%Y-%m-%d %H:%M")} '
+    #             f'for ${existing_purchase.price}'
+    #         )
+    #         return
+
+    #     # Get price
+    #     price = None
+    #     if purchase_date:
+    #         price = await self._get_historical_price(exact_symbol, purchase_date)
+    #     else:
+    #         price = await self._get_current_price(exact_symbol)
+
+    #     if not price:
+    #         await update.message.reply_text(f'Could not get price for {exact_symbol}')
+    #         return
+
+    #     # Get cryptocurrency name and coingecko_id
+    #     name = exact_symbol
+    #     coingecko_id = None
+    #     try:
+    #         exchange_info = self.binance_client.exchange_info(exact_symbol)
+    #         if exchange_info and 'symbols' in exchange_info:
+    #             for symbol_info in exchange_info['symbols']:
+    #                 if symbol_info['symbol'] == exact_symbol:
+    #                     name = symbol_info.get('baseAsset', exact_symbol)
+    #                     break
+    #     except Exception as e:
+    #         self.sentry_client.capture_exception(e)
+
+    #     # Try to get coingecko_id from our mapping
+    #     coingecko_id = self.symbol_to_coingecko_id.get(name.upper())
+
+    #     # Create purchase record
+    #     purchase_date = purchase_date or datetime.now()
+    #     self.db_client.create_cryptocurrency_purchase(
+    #         symbol=exact_symbol,
+    #         name=name,
+    #         price=price,
+    #         date=purchase_date,
+    #         coingecko_id=coingecko_id
+    #     )
+
+    #     # Send confirmation message
+    #     date_str = purchase_date.strftime('%Y-%m-%d %H:%M')
+    #     await update.message.reply_text(
+    #         f'Successfully simulated purchase of {exact_symbol} ({name}) at {date_str} for ${price}'
+    #     )
