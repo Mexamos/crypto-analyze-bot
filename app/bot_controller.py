@@ -756,14 +756,28 @@ class BotController:
             return
 
         cached_records = self.cache_client.get('last_trending_currencies')
-        if cached_records:
-            last_records = json.loads(cached_records)
+        if not cached_records:
+            return
 
-            message = await self._generate_message(last_records)
-            if not message:
-                return
+        last_records = json.loads(cached_records)
+        records = []
+        for record in last_records:
+            record_parts = record.split(':')
+            records.append({
+                'symbol': record_parts[0],
+                'exchange_symbol': record_parts[1],
+                'name': record_parts[2]
+            })
 
-            await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+        if not records:
+            return None
+
+        message_lines = [
+            f"{record['symbol']}" + ((12 - len(record['symbol'])) * ' ') + f"{record['name']}"
+            for record in records
+        ]
+        message = '```\n' + "\n".join(message_lines) + '```'
+        await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
     async def scikit_learn_predict(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or update.message.chat_id not in self.chat_ids:
