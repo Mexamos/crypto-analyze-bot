@@ -294,7 +294,7 @@ class BotController:
         return available_currencies
 
     async def _forming_currencies_list(
-        self, trending_coins, coindesk_articles, cryptopanic_posts, trend_words
+        self, trending_coins, coindesk_articles, cryptopanic_posts
     ) -> Dict[str, str]:
         coin_info: dict[str, dict[str, str]] = {}
         seen = set()
@@ -338,17 +338,6 @@ class BotController:
                     'name': symbol
                 }
                 seen.add(symbol)
-
-        for trend_word in trend_words:
-            if trend_word in seen:
-                continue
-
-            coin_info[trend_word] = {
-                'symbol': trend_word,
-                'exchange_symbol': trend_word + self.config.currency_conversion,
-                'name': trend_word
-            }
-            seen.add(trend_word)
 
         coin_info = await self._filter_conversion_currency(coin_info)
         return await self._filter_currencies_by_binance(coin_info)
@@ -410,10 +399,19 @@ class BotController:
             exchange_symbol = info['exchange_symbol']
             coingecko_id = self.symbol_to_coingecko_id.get(symbol)
 
-            # Get historical OHLCV data
-            historical_data = await self._get_historical_klines(exchange_symbol)
-            
-            comm_score = await self._get_coin_sentiment(coingecko_id)
+            try:
+                # Get historical OHLCV data
+                historical_data = await self._get_historical_klines(exchange_symbol)
+
+                comm_score = await self._get_coin_sentiment(coingecko_id)
+            except Exception as ex:
+                with push_scope() as scope:
+                    scope.set_context("symbol", symbol)
+                    scope.set_context("exchange_symbol", exchange_symbol)
+                    scope.set_context("coingecko_id", coingecko_id)
+                    self.sentry_client.capture_exception(ex)
+
+                raise ex
 
             news_score = self._get_news_sentiment(name)
 
@@ -723,10 +721,9 @@ class BotController:
             trending_coins = self._get_trending_coins()
             coindesk_articles = self._get_coindesk_articles(limit=10)
             cryptopanic_posts = self._get_cryptopanic_posts(limit=50)
-            trend_words = self._get_santiment_api_trend_words()
 
             coin_info = await self._forming_currencies_list(
-                trending_coins, coindesk_articles, cryptopanic_posts, trend_words
+                trending_coins, coindesk_articles, cryptopanic_posts
             )
             new_coin_info = await self._filter_new_records(coin_info)
             if not new_coin_info:
@@ -807,56 +804,56 @@ class BotController:
             self.sentry_client.capture_exception(ex)
             await update.message.reply_text(f'Error in scikit_learn_predict: {ex}')
 
-    async def _get_historical_price(self, symbol: str, purchase_date: datetime) -> Optional[Decimal]:
-        """Get historical price for a symbol at a specific date"""
-        try:
-            # Convert datetime to timestamp for Binance API
-            timestamp = int(purchase_date.timestamp() * 1000)
+    # async def _get_historical_price(self, symbol: str, purchase_date: datetime) -> Optional[Decimal]:
+    #     """Get historical price for a symbol at a specific date"""
+    #     try:
+    #         # Convert datetime to timestamp for Binance API
+    #         timestamp = int(purchase_date.timestamp() * 1000)
             
-            # Get klines data for the specific time
-            klines = self.binance_client.klines(
-                symbol=symbol,
-                interval='1h',
-                start_time=timestamp,
-                end_time=timestamp + 3600000,  # Add 1 hour to ensure we get data
-                limit=1
-            )
+    #         # Get klines data for the specific time
+    #         klines = self.binance_client.klines(
+    #             symbol=symbol,
+    #             interval='1h',
+    #             start_time=timestamp,
+    #             end_time=timestamp + 3600000,  # Add 1 hour to ensure we get data
+    #             limit=1
+    #         )
             
-            if klines and len(klines) > 0:
-                # Return the closing price
-                return Decimal(str(klines[0][4]))
-            return None
-        except Exception as e:
-            self.sentry_client.capture_exception(e)
-            return None
+    #         if klines and len(klines) > 0:
+    #             # Return the closing price
+    #             return Decimal(str(klines[0][4]))
+    #         return None
+    #     except Exception as e:
+    #         self.sentry_client.capture_exception(e)
+    #         return None
 
-    async def _get_current_price(self, symbol: str) -> Optional[Decimal]:
-        """Get current price for a symbol"""
-        try:
-            # Get the latest kline
-            klines = self.binance_client.klines(
-                symbol=symbol,
-                interval='1h',
-                limit=1
-            )
+    # async def _get_current_price(self, symbol: str) -> Optional[Decimal]:
+    #     """Get current price for a symbol"""
+    #     try:
+    #         # Get the latest kline
+    #         klines = self.binance_client.klines(
+    #             symbol=symbol,
+    #             interval='1h',
+    #             limit=1
+    #         )
             
-            if klines and len(klines) > 0:
-                return Decimal(str(klines[0][4]))
-            return None
-        except Exception as e:
-            self.sentry_client.capture_exception(e)
-            return None
+    #         if klines and len(klines) > 0:
+    #             return Decimal(str(klines[0][4]))
+    #         return None
+    #     except Exception as e:
+    #         self.sentry_client.capture_exception(e)
+    #         return None
 
-    async def _find_matching_symbols(self, symbol: str) -> List[str]:
-        """Find all matching symbols in Binance"""
-        try:
-            exchange_info = self.binance_client.exchange_info(symbol)
-            if exchange_info and 'symbols' in exchange_info:
-                return [s['symbol'] for s in exchange_info['symbols'] if s['symbol'].startswith(symbol)]
-            return []
-        except Exception as e:
-            self.sentry_client.capture_exception(e)
-            return []
+    # async def _find_matching_symbols(self, symbol: str) -> List[str]:
+    #     """Find all matching symbols in Binance"""
+    #     try:
+    #         exchange_info = self.binance_client.exchange_info(symbol)
+    #         if exchange_info and 'symbols' in exchange_info:
+    #             return [s['symbol'] for s in exchange_info['symbols'] if s['symbol'].startswith(symbol)]
+    #         return []
+    #     except Exception as e:
+    #         self.sentry_client.capture_exception(e)
+    #         return []
 
     # async def simulate_purchase_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     #     if update.message.chat_id not in self.chat_ids:
