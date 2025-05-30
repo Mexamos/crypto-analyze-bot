@@ -221,8 +221,15 @@ class BotController:
         return response.get("Data", [])
 
     def _get_cryptopanic_posts(self, limit: int = 50) -> list:
-        response = self.cryptopanic_client._get_free_posts(limit)
-        return response.get("results", [])
+        try:
+            response = self.cryptopanic_client._get_free_posts(limit)
+            return response.get("results", [])
+        except HTTPError as exc:
+            exception_body = exc.response.json()
+            if 'API monthly quota exceeded' in exception_body.get('info', ''):
+                return []
+
+            raise exc
 
     def _get_santiment_api_trend_words(self):
         to_date = datetime.now()
