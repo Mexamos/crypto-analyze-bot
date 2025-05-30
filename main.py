@@ -1,4 +1,5 @@
 import os
+import logging
 
 from dotenv import load_dotenv
 from redis import Redis
@@ -36,6 +37,17 @@ REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
 REDIS_PORT = os.getenv('REDIS_PORT', 6379)
 REDIS_DB = os.getenv('REDIS_DB', 0)
 REDIS_PASSWORD = os.getenv('REDIS_PASSWORD')
+
+TURN_ON_LOGS= os.getenv('TURN_ON_LOGS', 'False').lower() in ('true', '1', 'yes')
+
+if TURN_ON_LOGS:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler()
+        ]
+    )
 
 # TODO Add for requests raises exceptions !!!!!!!!!!
 

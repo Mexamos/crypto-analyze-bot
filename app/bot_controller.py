@@ -91,6 +91,7 @@ class BotController:
         self.cache_client: CacheClient = cache_client
         self.sentry_client = sentry_client
         self.config = config
+        self.logger: logging.Logger = logging.getLogger(__name__)
 
         self.symbol_to_coingecko_id = {}
         self.timezone = timezone(self.config.timezone_name)
@@ -357,6 +358,7 @@ class BotController:
             last_records = json.loads(cached_records)
             for record in records:
                 if record not in last_records:
+                    record = record.split(':')
                     new_records.append({
                         'symbol': record[0],
                         'exchange_symbol': record[1],
@@ -735,17 +737,25 @@ class BotController:
             new_coin_info = await self._filter_new_records(coin_info)
             if not new_coin_info:
                 return
+            
+            message_lines = [
+                f"{record['symbol']}" + ((12 - len(record['symbol'])) * ' ') + f"{record['name']}"
+                for record in new_coin_info
+            ]
+            message = '```\n' + "\n".join(message_lines) + '```'
+            for chat_id in self.chat_ids:
+                await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
-            rows = await self._get_metrics_per_currency(new_coin_info, cryptopanic_posts)
+            # rows = await self._get_metrics_per_currency(new_coin_info, cryptopanic_posts)
 
-            df = await self._calculate_signals(rows)
+            # df = await self._calculate_signals(rows)
 
-            df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
+            # df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
 
-            message = await self._generate_message(df.to_dict(), signal_type="BUY")
-            if message:
-                for chat_id in self.chat_ids:
-                    await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
+            # message = await self._generate_message(df.to_dict(), signal_type="BUY")
+            # if message:
+            #     for chat_id in self.chat_ids:
+            #         await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
         except HTTPError as ex:
             exception_body = ex.response.json()
