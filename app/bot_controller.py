@@ -617,7 +617,6 @@ class BotController:
         return trailing_stop
 
     async def _calculate_signals(self, rows) -> pd.DataFrame:
-        # Build DataFrame and normalize
         df = pd.DataFrame(rows)
         
         # Calculate technical indicators if we have historical data
@@ -674,12 +673,12 @@ class BotController:
 
         # Compute composite score with all factors
         df["composite"] = (
-            0.3 * df["comm_score_n"] +
+            0.1 * df["comm_score_n"] +
             0.15 * df["news_score_n"] +
             0.15 * df["cryptopanic_score_n"] +
             0.2 * df["technical_score"] +
-            0.1 * df["prediction_score"] +
-            0.1 * df["trend_prediction"]
+            0.2 * df["prediction_score"] +
+            0.2 * df["trend_prediction"]
         )
 
         # Generate signals with dynamic thresholds and risk management
@@ -737,25 +736,17 @@ class BotController:
             new_coin_info = await self._filter_new_records(coin_info)
             if not new_coin_info:
                 return
-            
-            message_lines = [
-                f"{record['symbol']}" + ((12 - len(record['symbol'])) * ' ') + f"{record['name']}"
-                for record in new_coin_info
-            ]
-            message = '```\n' + "\n".join(message_lines) + '```'
-            for chat_id in self.chat_ids:
-                await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
-            # rows = await self._get_metrics_per_currency(new_coin_info, cryptopanic_posts)
+            rows = await self._get_metrics_per_currency(new_coin_info, cryptopanic_posts)
 
-            # df = await self._calculate_signals(rows)
+            df = await self._calculate_signals(rows)
 
-            # df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
+            df = df.sort_values("composite", ascending=False)[["symbol", "composite", "signal"]]
 
-            # message = await self._generate_message(df.to_dict(), signal_type="BUY")
-            # if message:
-            #     for chat_id in self.chat_ids:
-            #         await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
+            message = await self._generate_message(df.to_dict(), signal_type="BUY")
+            if message:
+                for chat_id in self.chat_ids:
+                    await context.bot.send_message(chat_id, message, parse_mode=ParseMode.MARKDOWN_V2)
 
         except HTTPError as ex:
             exception_body = ex.response.json()
