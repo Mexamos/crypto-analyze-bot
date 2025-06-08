@@ -77,7 +77,6 @@ class TrendingCurrencyProcessor:
             coin_info = await self._forming_currencies_list(
                 trending_coins, coindesk_articles, cryptopanic_posts
             )
-            new_coin_info = coin_info
             new_coin_info = await self._filter_new_records(coin_info)
             if not new_coin_info:
                 return
@@ -241,7 +240,7 @@ class TrendingCurrencyProcessor:
 
         return new_records
 
-    async def _get_historical_klines(self, symbol: str, interval: str = '1h', limit: int = 100) -> pd.DataFrame:
+    async def _get_historical_klines(self, symbol: str, interval: str = '1h', limit: int = 1000) -> pd.DataFrame:
         """Fetch historical klines (OHLCV) data from Binance"""
         try:
             klines = self.binance_client.klines(
@@ -249,22 +248,22 @@ class TrendingCurrencyProcessor:
                 interval=interval,
                 limit=limit
             )
-            
+
             # Convert to DataFrame
             df = pd.DataFrame(klines, columns=[
                 'Open Time', 'Open', 'High', 'Low', 'Close', 'Volume',
                 'Close Time', 'Quote Asset Volume', 'Number of Trades',
                 'Taker Buy Base Asset Volume', 'Taker Buy Quote Asset Volume', 'Ignore'
             ])
-            
+
             # Convert types
             df['Open Time'] = pd.to_datetime(df['Open Time'], unit='ms')
             df['Close Time'] = pd.to_datetime(df['Close Time'], unit='ms')
             for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
-            
+
             return df
-            
+
         except Exception as e:
             self.sentry_client.capture_exception(e)
             return pd.DataFrame()
@@ -282,7 +281,7 @@ class TrendingCurrencyProcessor:
 
             try:
                 # Get historical OHLCV data
-                historical_data = await self._get_historical_klines(exchange_symbol)
+                historical_data = await self._get_historical_klines(exchange_symbol, limit=200)
 
                 comm_score = await self._get_coin_sentiment(coingecko_id)
             except Exception as ex:
@@ -530,14 +529,15 @@ class TrendingCurrencyProcessor:
                     # Calculate technical indicators for this symbol's historical data
                     symbol_data = self._calculate_technical_indicators(row['historical_data'])
                     technical_signals = self._generate_technical_signals(symbol_data)
-                    
+
                     # Get the last values
                     df.at[idx, 'technical_score'] = technical_signals['Technical_Score'].iloc[-1]
-                    
+                    print(f"Technical score for {row['symbol']}: {df.at[idx, 'technical_score']}")
+
                     # Add Prophet predictions
                     try:
                         prophet_model = self._train_prophet_model(symbol_data, row['symbol'])
-                        forecast = self._get_price_prediction(prophet_model)
+                        forecast = self._get_price_prediction(prophet_model, periods=1)
                         
                         # Calculate prediction confidence
                         last_price = symbol_data['Close'].iloc[-1]
@@ -546,10 +546,12 @@ class TrendingCurrencyProcessor:
                         
                         # Normalize prediction confidence
                         df.at[idx, 'prediction_score'] = 1 - (prediction_range / last_price)
+                        print(f"Prediction score for {row['symbol']}: {df.at[idx, 'prediction_score']}")
                         
                         # Add trend prediction
                         price_change = (next_prediction - last_price) / last_price
                         df.at[idx, 'trend_prediction'] = np.clip(price_change * 5, -1, 1)
+                        print(f"Trend prediction for {row['symbol']}: {df.at[idx, 'trend_prediction']}")
                         
                         # Calculate position size and risk metrics
                         available_balance = float(self.config.total_available_amount)
@@ -562,6 +564,8 @@ class TrendingCurrencyProcessor:
                         df.at[idx, 'trend_prediction'] = 0
                         df.at[idx, 'position_size'] = 0
                         df.at[idx, 'trailing_stop'] = 0
+
+                print(' ')
         else:
             df['technical_score'] = 0
             df['prediction_score'] = 0
