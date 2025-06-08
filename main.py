@@ -92,8 +92,8 @@ def main():
         TOKEN,
         BOT_CHAT_IDS,
     )
-    telegram_controller.init_bot()
     telegram_controller.get_all_coins()
+    telegram_controller.init_bot()
 
     telegram_controller.run_bot()
 
