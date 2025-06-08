@@ -784,6 +784,30 @@ class BotController:
         message = '```\n' + "\n".join(message_lines) + '```'
         await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
 
+    async def validate_currency(self, currency: str, projects: pd.DataFrame) -> None:
+        currency_lower = currency.lower()
+        exists = ((
+            projects['ticker'].str.lower() == currency_lower
+        ) | (
+            projects['slug'].str.lower() == currency_lower
+        )).any()
+
+        if not exists:
+            raise Exception(f"Invalid currency: {currency}")
+
+    async def get_slug_by_currency(self, currency: str, projects: pd.DataFrame) -> str:
+        currency_lower = currency.lower()
+        slug = projects.loc[
+            (projects['ticker'].str.lower() == currency_lower) |
+            (projects['slug'].str.lower() == currency_lower),
+            'slug'
+        ].iloc[0]
+
+        if not slug:
+            raise ValueError(f"Currency '{currency}' not found in projects.")
+
+        return slug
+
     async def scikit_learn_predict(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or update.message.chat_id not in self.chat_ids:
             return
@@ -800,11 +824,14 @@ class BotController:
             )
             end_training_date = datetime.now(self.timezone).strftime(self.date_format)
 
-            self.santiment_api_client.validate_slugs([currency_name])
+            projects = self.santiment_api_client.get_all_projects()
+            await self.validate_currency(currency_name, projects)
+            slug = await self.get_slug_by_currency(currency_name, projects)
+
             self.model_training_facade.train_and_save_model(
-                [currency_name], start_training_date, end_training_date
+                [slug], start_training_date, end_training_date
             )
-            message = self.model_prediction_facade.predict([currency_name])
+            message = self.model_prediction_facade.predict([slug])
 
             await update.message.reply_text(message)
 

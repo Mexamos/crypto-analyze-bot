@@ -39,13 +39,6 @@ class SantimentApiClient:
 
         return self._projects_df
 
-    def validate_slugs(self, slugs: List[str]) -> None:
-        df = self.get_all_projects()
-        valid_slugs = set(df["slug"].tolist())
-        invalid = [slug for slug in slugs if slug not in valid_slugs]
-        if invalid:
-            raise InvalidSlug(f"Invalid slugs: {', '.join(invalid)}")
-
     def emerging_trends(self, from_date: str, to_date: str, interval: str = "1h", size: int = 10):
         trends = san.get(
             "emerging_trends",
