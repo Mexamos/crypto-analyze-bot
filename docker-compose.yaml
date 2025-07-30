@@ -5,17 +5,5 @@ services:
         container_name: bot
         volumes:
             - .:/src
-        environment:
-            - REDIS_HOST=redis
         env_file:
             - .env
-        depends_on:
-            - redis
-
-    redis:
-        image: redis/redis-stack:7.4.0-v1
-        container_name: bot-redis
-        ports:
-            - "6379:6379"
-            - "8001:8001"
-        command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
