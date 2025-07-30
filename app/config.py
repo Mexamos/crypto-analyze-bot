@@ -1,4 +1,5 @@
 import configparser
+import json
 from decimal import Decimal
 
 
@@ -58,6 +59,11 @@ class Config:
         self.total_available_amount = Decimal(self.config.get(
             'trading_volume', 'total_available_amount', fallback='100'
         ))
+
+        self.analyze_symbols = json.loads(self.config.get('analyze', 'symbols'))
+        self.analyze_names = json.loads(self.config.get('analyze', 'names'))
+        self.analyze_change_percentages = json.loads(self.config.get('analyze', 'change_percentages'))
+        self.analyze_change_percentages = [Decimal(percentage) for percentage in self.analyze_change_percentages]
 
         self.quotes_historical_count = self.config.getint(
             'historical_data', 'quotes_historical_count', fallback=10

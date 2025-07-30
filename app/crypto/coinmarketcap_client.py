@@ -1,19 +1,5 @@
-# Структура данных для реального бота
-# список валют что мы уже купили
-# название валюты
-# цена за которую купили (~ratio)
-# время когда купили
-# orderId
-
-
-# Trending Gainers & Losers
-# https://coinmarketcap.com/api/documentation/v1/#operation/getV1CryptocurrencyTrendingGainerslosers
-
-# Trending Latest
-# https://coinmarketcap.com/api/documentation/v1/#operation/getV1CryptocurrencyTrendingLatest
-
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 from pytz import timezone
 from requests import Session
@@ -37,6 +23,7 @@ class CoinmarketcapClient:
         self.latest_request_datetime = None
 
     def _call(self, url: str, params: dict):
+        url = self.host + url
         headers = {
             'Accepts': 'application/json',
             'X-CMC_PRO_API_KEY': self.api_key,
@@ -53,9 +40,19 @@ class CoinmarketcapClient:
             return json_result
         except (ConnectionError, Timeout, TooManyRedirects) as ex:
             raise CmcException() from ex
+        
+    def get_id_map(self, symbol: Optional[str] = None) -> List[dict]:
+        url = '/v1/cryptocurrency/map'
+        parameters = {
+            'sort': 'cmc_rank',
+        }
+        if symbol:
+            parameters['symbol'] = symbol
+
+        return self._call(url, parameters)
 
     def _trending_latest(self):
-        url = self.host + '/v1/cryptocurrency/trending/latest'
+        url = '/v1/cryptocurrency/trending/latest'
         parameters = {
             'start':'1',
             'limit':'100',
@@ -64,7 +61,7 @@ class CoinmarketcapClient:
         return self._call(url, parameters)
 
     def _trending_gainers_losers(self):
-        url = self.host + '/v1/cryptocurrency/trending/gainers-losers'
+        url = '/v1/cryptocurrency/trending/gainers-losers'
         parameters = {
             'start':'1',
             'limit':'100',
@@ -89,15 +86,18 @@ class CoinmarketcapClient:
 
         return sorted_data
 
-    def get_quotes_latest(self, cmc_id: int):
-        url = self.host + '/v2/cryptocurrency/quotes/latest'
+    def get_quotes_latest(self, cmc_id: int, convert: Optional[str] = None):
+        url = '/v2/cryptocurrency/quotes/latest'
         parameters = {
-            'id': cmc_id
+            'id': cmc_id,
         }
+        if convert:
+            parameters['convert'] = convert
+
         return self._call(url, parameters)
 
     def get_quotes_historical(self, cmc_id: int):
-        url = self.host + '/v2/cryptocurrency/quotes/historical'
+        url = '/v2/cryptocurrency/quotes/historical'
         parameters = {
             'id': cmc_id,
             'count': self.config.quotes_historical_count,

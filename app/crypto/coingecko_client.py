@@ -23,6 +23,7 @@ class CoingeckoClient:
         self.latest_request_datetime = None
 
     def _call(self, url: str, params: Optional[dict] = None):
+        url = self.host + url
         headers = {
             'accept': 'application/json',
             'x-cg-api-key': self.api_key
@@ -41,15 +42,15 @@ class CoingeckoClient:
             raise CoingeckoException() from ex
 
     def _get_coins_list(self):
-        url = self.host + '/api/v3/coins/list'
+        url = '/api/v3/coins/list'
         return self._call(url)
 
     def _get_trending_coins(self):
-        url = self.host + '/api/v3/search/trending'
+        url = '/api/v3/search/trending'
         return self._call(url)
 
     def _get_coin_by_id(self, coin_id: str):
-        url = self.host + f'/api/v3/coins/{coin_id}'
+        url = f'/api/v3/coins/{coin_id}'
         params = {
             "localization":   "false",
             "tickers":        "false",
@@ -57,5 +58,13 @@ class CoingeckoClient:
             "community_data": "false",
             "developer_data": "false",
             "sparkline":      "false",
+        }
+        return self._call(url, params)
+    
+    def _get_current_price(self, coin_id, vs_currency: str):
+        url = f"/api/v3/simple/price"
+        params = {
+            "ids": coin_id,
+            "vs_currencies": vs_currency
         }
         return self._call(url, params)

@@ -1,6 +1,6 @@
 import hmac
 import hashlib
-from typing import Optional
+from typing import Optional, List
 from time import time
 import urllib.parse
 
@@ -21,7 +21,6 @@ class BinanceClient:
         }
         response = requests.request(method, url, headers=headers, params=params)
         response.raise_for_status()
-        # print('response.headers', response.headers)
         return response.json()
 
     def exchange_info(self, symbol: str):
@@ -70,7 +69,9 @@ class BinanceClient:
         signature = hashing_object.hexdigest()
         return signature
 
-    def get_account_balance(self, asset: str):
+    def get_account_balance(
+        self, assets: Optional[List[str]] = None
+    ):
         timestamp = int(time() * 1000)
         query_string = f'timestamp={timestamp}'
         signature = self._generate_signature(query_string)
@@ -79,7 +80,10 @@ class BinanceClient:
         response = self._call(url, {})
 
         balances = response['balances']
-        return next((float(b['free']) for b in balances if b['asset'] == asset), 0.0)
+        if assets:
+            return {balance['asset']: float(balance['free']) for balance in balances if balance['asset'] in assets}
+
+        return balances
 
     def get_account_trade_list(self, asset: str):
         timestamp = int(time() * 1000)

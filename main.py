@@ -9,6 +9,7 @@ from app.cache.client import CacheClient
 from app.database.client import DatabaseClient
 from app.crypto.coindesk_client import CoindeskClient
 from app.crypto.coingecko_client import CoingeckoClient
+from app.crypto.coinmarketcap_client import CoinmarketcapClient
 from app.crypto.cryptopanic_client import CryptopanicClient
 from app.crypto.newsapi_client import NewsapiClient
 from app.crypto.binance_client import BinanceClient
@@ -62,8 +63,8 @@ if TURN_ON_LOGS:
 def main():
     config = Config()
     db_client = DatabaseClient()
-    redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, password=REDIS_PASSWORD)
-    cache_client = CacheClient(redis)
+    # redis = Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB, password=REDIS_PASSWORD)
+    cache_client = None # CacheClient(redis)
     sentry_client = SentryClient(SENTRY_DSN, config)
 
     coindesk_client = CoindeskClient('https://data-api.coindesk.com')
@@ -72,6 +73,7 @@ def main():
     newsapi_client = NewsapiClient('https://newsapi.org', NEWS_API_KEY)
     santiment_api_client = SantimentApiClient(SANTIMENT_API_KEY)
     binance_client = BinanceClient(BINANCE_API_KEY, BINANCE_SECRET_KEY)
+    coinmarketcap_client = CoinmarketcapClient(COIN_MARKET_CAP_API_KEY, config)
 
     model_training_facade = ModelTrainingFacade(api_client=santiment_api_client, config=config)
     model_prediction_facade = ModelPredictionFacade(api_client=santiment_api_client, config=config)
@@ -84,6 +86,7 @@ def main():
         cryptopanic_client,
         newsapi_client,
         santiment_api_client,
+        coinmarketcap_client,
         model_training_facade,
         model_prediction_facade,
         cache_client,
