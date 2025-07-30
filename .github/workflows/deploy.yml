@@ -23,6 +23,7 @@ jobs:
 
                 echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
                 echo "BOT_CHAT_IDS=${{ secrets.BOT_CHAT_IDS }}" >> .env
+                echo "COIN_MARKET_CAP_API_KEY=${{ secrets.COIN_MARKET_CAP_API_KEY }}" >> .env
                 echo "COINGECKO_API_KEY=${{ secrets.COINGECKO_API_KEY }}" >> .env
                 echo "SANTIMENT_API_KEY=${{ secrets.SANTIMENT_API_KEY }}" >> .env
                 echo "NEWS_API_KEY=${{ secrets.NEWS_API_KEY }}" >> .env
